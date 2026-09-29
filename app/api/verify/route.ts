@@ -4,15 +4,16 @@ import { sources } from "@/lib/knowledge";
 export async function POST(request: Request) {
   try {
     const user = await identity(request);
-    const parsed = z
-      .object({ text: z.string().min(1).max(30000) })
-      .safeParse(await request.json());
-    if (!parsed.success) throw new ApiError("Enter claims to review.");
+    const json = await request.json().catch(() => {
+      throw new ApiError("The request couldn’t be read. Please try again.");
+    });
+    const parsed = z.object({ text: z.string() }).safeParse(json);
+    if (!parsed.success || !parsed.data.text.trim()) throw new ApiError("Enter claims to review.");
     const { text } = parsed.data;
-    if (typeof text !== "string" || text.length > 30000 || !text.trim())
-      throw new ApiError("Enter claims to check, up to 30,000 characters.");
+    if (text.length > 30000)
+      throw new ApiError("Your text is too long to check (max 30,000 characters).");
     const extra = await database()
-      .prepare("SELECT id,title,content FROM documents WHERE user_id=?")
+      .prepare("SELECT id,title,content FROM documents WHERE user_id=? ORDER BY created_at DESC LIMIT 200")
       .bind(user.userId)
       .all();
     const docs = [
@@ -23,12 +24,14 @@ export async function POST(request: Request) {
         content: String(d.content),
       })),
     ];
-    const claims = text
+    const all = text
       .split(/\n+|(?<=[.!?])\s+/)
       .map((s: string) => s.trim())
-      .filter((s: string) => s.length > 15)
-      .slice(0, 20);
+      .filter((s: string) => s.length > 15);
+    const claims = all.slice(0, 20);
     return Response.json({
+      checked: claims.length,
+      total: all.length,
       method:
         "Text overlap check — not semantic or factual verification. Review the source before relying on a claim.",
       claims: claims.map((claim: string) => {
@@ -48,9 +51,13 @@ export async function POST(request: Request) {
             .replace(/[^a-z0-9 ]/g, "")
             .includes(normalized),
         );
+        // Sample conflict: the old pitch says Project Atlas deploys in June
+        // 2027; the later status update says August. Only the stale June date
+        // is flagged, and only when the claim is about Atlas.
         const conflict =
-          /atlas|deployment|deploy/.test(normalized) &&
-          /june|august/.test(normalized);
+          /\batlas\b/.test(normalized) &&
+          /\bjune\b/.test(normalized) &&
+          !/\baugust\b/.test(normalized);
         return {
           claim,
           status: conflict

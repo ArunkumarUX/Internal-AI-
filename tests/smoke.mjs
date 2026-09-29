@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 const base = "http://localhost:5173";
 const unauthorized = await fetch(`${base}/api/workspace`);
 assert.equal(unauthorized.status, 401);
+assert.equal((await fetch(`${base}/api/models`)).status, 401);
 const login = await fetch(`${base}/signin-with-chatgpt?return_to=/`, {
   redirect: "manual",
 });
@@ -25,6 +26,27 @@ let r = await call("/api/workspace");
 assert.equal(r.status, 200, await r.clone().text());
 const ws = await r.json();
 assert.equal(ws.user.userId, "local_seedy");
+assert.equal(typeof ws.aiConfigured, "boolean");
+assert.equal(typeof ws.aiModel, "string");
+r = await call("/api/models");
+assert.equal(r.status, 200, await r.clone().text());
+const models = await r.json();
+assert.equal(typeof models.configured, "boolean");
+assert(Array.isArray(models.presets) && models.presets.length === 3);
+assert.equal(models.presets[0].label, "Recommended");
+if (models.configured && models.selected?.model) {
+  r = await call("/api/models", {
+    model: models.selected.model,
+    fastModel: models.selected.fast,
+  });
+  assert.equal(r.status, 200, await r.clone().text());
+}
+r = await call(
+  "/api/models",
+  { model: "qwen3.8-max" },
+  { Origin: "https://untrusted.example" },
+);
+assert.equal(r.status, 403);
 r = await call("/api/workspace", {
   kind: "saved",
   data: {
@@ -135,5 +157,5 @@ assert.equal(failedServer.data.status, "Configuration required");
 assert.match(failedServer.data.lastError, /approved HTTPS host list/);
 assert(failedServer.data.lastTest);
 console.log(
-  "PASS: identity, persistence, cross-origin rejection, grounded retrieval, no-evidence response, claim conflicts, upload/download, private file access, attachment context, user-scoped actions, MCP host allowlist.",
+  "PASS: identity, persistence, cross-origin rejection, grounded retrieval, no-evidence response, claim conflicts, upload/download, private file access, attachment context, user-scoped actions, MCP host allowlist, model catalog.",
 );

@@ -30,6 +30,7 @@ export const documents = sqliteTable(
     client: text("client").notNull().default(""),
     category: text("category").notNull().default(""),
     docDate: text("doc_date").notNull().default(""),
+    sha256: text("sha256").notNull().default(""),
   },
   (t) => [index("documents_user").on(t.userId)],
 );

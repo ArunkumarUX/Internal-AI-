@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useDeferredValue } from "react";
 import {
   ArrowUpRight,
   ArrowRight,
@@ -31,9 +31,19 @@ import {
   Sparkles,
   MessageCircle,
   Upload,
-  ExternalLink,
+  Cpu,
+  Database,
+  MoreHorizontal,
+  Pencil,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +52,14 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+} from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
@@ -62,13 +80,15 @@ import { toast } from "sonner";
 import {
   sources,
   people,
-  clients,
   insights,
   initialActions,
   phases,
+  CLIENT_STAGES,
+  type Client,
+  type ClientStage,
   type Source,
 } from "@/lib/knowledge";
-import { api, downloadText, type Workspace } from "@/lib/client";
+import { api, downloadText, initialsOf, type Workspace } from "@/lib/client";
 type Props = {
   ws: Workspace;
   ask: (q: string, options?: { attachmentIds?: string[] }) => void;
@@ -77,6 +97,10 @@ type Props = {
   setView: (v: string) => void;
   upload: () => void;
   initialClaim?: string;
+  client?: string;
+  setClient?: (name?: string) => void;
+  openAddClient?: boolean;
+  setOpenAddClient?: (open: boolean) => void;
 };
 export function Badge({
   children,
@@ -183,13 +207,25 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
   const [tab, setTab] = useState("library");
   const [selected, setSelected] = useState<string[]>([]);
   const [comparing, setComparing] = useState(false);
+  const [hideSamples, setHideSamples] = useState(false);
+  // Searching every document's text on each keystroke lags; search the settled value.
+  const deferredQuery = useDeferredValue(query);
+  const q = deferredQuery.trim().toLowerCase();
   const list = ws.allSources.filter(
     (s) =>
       (filter === "All sources" || s.system === filter) &&
-      `${s.title} ${s.content} ${s.tags.join(" ")}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
+      (!hideSamples || !s.sample) &&
+      (!q || `${s.title} ${s.content} ${s.tags.join(" ")} ${s.client}`.toLowerCase().includes(q)),
   );
+  // Only rows that still exist and are visible can be compared.
+  const chosen = selected.filter((id) => list.some((s) => s.id === id));
+  useEffect(() => {
+    setSelected((ids) => {
+      const next = ids.filter((id) => ws.allSources.some((s) => s.id === id));
+      return next.length === ids.length ? ids : next;
+    });
+  }, [ws.allSources]);
+  const hiddenDocs = (ws.state.documentTotal ?? 0) - ws.state.documents.length;
   const discuss = (s: Source, mode: "summarise" | "ask") => {
     const question =
       mode === "summarise"
@@ -226,7 +262,7 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
               placeholder="Search documents, topics or people"
             />
             <Select value={filter} onValueChange={setFilter}>
-              <SelectTrigger className="w-[170px]">
+              <SelectTrigger className="w-[170px]" aria-label="Filter by source">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -246,18 +282,37 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
             </Select>
           </div>
           <div className="list-caption">
-            <span>{list.length} documents · sample sources are labelled</span>
-            {selected.length > 0 && (
-              <button className="text-link" onClick={() => setComparing(true)}>
-                Compare {selected.length} selected <ArrowRight size={14} />
-              </button>
+            <span>
+              {list.length} {list.length === 1 ? "document" : "documents"}
+              {hiddenDocs > 0 ? ` · showing your latest ${ws.state.documents.length} of ${ws.state.documentTotal} uploads` : ""}
+            </span>
+            <label className="caption-toggle">
+              <Checkbox checked={hideSamples} onCheckedChange={(v) => setHideSamples(!!v)} aria-label="Hide sample sources" />
+              Hide samples
+            </label>
+            {chosen.length > 0 && (
+              <span className="caption-actions">
+                {chosen.length >= 2 ? (
+                  <button className="text-link" onClick={() => setComparing(true)}>
+                    Compare {chosen.length} selected <ArrowRight size={14} />
+                  </button>
+                ) : (
+                  <span className="muted-note">Select one more to compare</span>
+                )}
+                <button className="quiet-button" onClick={() => setSelected([])}>
+                  Clear
+                </button>
+              </span>
             )}
           </div>
+          {list.length > 0 && (
           <div className="table-surface">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10"> </TableHead>
+                  <TableHead className="col-check">
+                    <span className="sr-only">Select</span>
+                  </TableHead>
                   <TableHead>Document</TableHead>
                   <TableHead>Owner</TableHead>
                   <TableHead>Updated</TableHead>
@@ -270,7 +325,7 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
               <TableBody>
                 {list.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell>
+                    <TableCell className="col-check">
                       <Checkbox
                         aria-label={`Select ${s.title}`}
                         checked={selected.includes(s.id)}
@@ -343,10 +398,21 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
               </TableBody>
             </Table>
           </div>
+          )}
           {!list.length && (
             <Empty
-              title="No documents found"
-              description="Try a broader search or upload a document."
+              title={q || filter !== "All sources" ? "No documents match" : "Your library is empty"}
+              description={
+                q || filter !== "All sources"
+                  ? "Try a broader search, another source, or clear the filters."
+                  : "Upload a document to build your organisation’s knowledge."
+              }
+              action={
+                <button className="secondary-button" onClick={upload}>
+                  <Upload size={16} />
+                  Upload document
+                </button>
+              }
             />
           )}
         </TabsContent>
@@ -356,19 +422,24 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
               <strong>
                 {ws.allSources.filter((s) => s.status === "Verified").length}
               </strong>
-              <span>Verified sources</span>
+              <span>
+                Verified sources
+                {ws.allSources.some((s) => s.sample && s.status === "Verified")
+                  ? ` (${ws.allSources.filter((s) => s.sample && s.status === "Verified").length} sample)`
+                  : ""}
+              </span>
             </div>
             <div>
-              <strong>1</strong>
+              <strong>{insights.filter((i) => i.id === "freshness").length}</strong>
               <span>Superseded reference</span>
             </div>
             <div>
-              <strong>1</strong>
+              <strong>{insights.filter((i) => i.id === "conflict").length}</strong>
               <span>Potential conflict</span>
             </div>
             <div>
-              <strong>1</strong>
-              <span>Evidence gap</span>
+              <strong>{ws.allSources.filter((s) => s.system === "Uploads" && s.status !== "Verified").length}</strong>
+              <span>Uploads awaiting review</span>
             </div>
           </div>
           <p className="muted-note">
@@ -454,7 +525,8 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
           </DialogHeader>
           <div className="two-column">
             {ws.allSources
-              .filter((d) => selected.includes(d.id))
+              .filter((d) => chosen.includes(d.id))
+              .slice(0, 4)
               .map((d) => (
                 <article className="panel" key={d.id}>
                   <Badge tone={d.status === "Verified" ? "green" : "amber"}>
@@ -474,81 +546,600 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
     </>
   );
 }
-export function ClientsView({ ws, openSource, ask }: Props) {
-  const [selected, setSelected] = useState(clients[0].name);
-  const [tab, setTab] = useState("Overview");
-  const c = clients.find((x) => x.name === selected)!;
+const CLIENT_COLORS = ["sky", "lilac", "mint", "peach", "amber"];
+const STAGE_TONES: Record<ClientStage, string> = {
+  Prospect: "neutral",
+  Discovery: "lilac",
+  Pilot: "sky",
+  Active: "mint",
+  "On hold": "amber",
+};
+export function ClientsView({
+  ws,
+  openSource,
+  ask,
+  upload,
+  client,
+  setClient,
+  openAddClient,
+  setOpenAddClient,
+}: Props) {
+  const [openName, setOpenName] = useState<string | undefined>(client);
+  useEffect(() => setOpenName(client), [client]);
+  const openClient = (name?: string) => {
+    setOpenName(name);
+    setClient?.(name);
+  };
+  const [query, setQuery] = useState("");
+  const [adding, setAdding] = useState<ClientStage | null>(null);
+  const startAdd = (stage: ClientStage = "Prospect") => {
+    setAdding(stage);
+    setOpenAddClient?.(true);
+  };
+  const stopAdd = () => {
+    setAdding(null);
+    setOpenAddClient?.(false);
+  };
+  useEffect(() => {
+    if (openAddClient) setAdding((stage) => stage ?? "Prospect");
+    else setAdding(null);
+  }, [openAddClient]);
+  const [dragging, setDragging] = useState<string>();
+  const [dropStage, setDropStage] = useState<ClientStage>();
+  const q = query.trim().toLowerCase();
+  const visible = ws.allClients.filter(
+    (x) =>
+      !q ||
+      x.name.toLowerCase().includes(q) ||
+      x.industry.toLowerCase().includes(q) ||
+      x.owner.toLowerCase().includes(q),
+  );
+  const docCount = (name: string, base: string[]) =>
+    new Set([
+      ...base,
+      ...ws.allSources.filter((s) => s.client === name).map((s) => s.id),
+    ]).size;
+  // Stage moves show instantly and roll back if the save fails.
+  const [pending, setPending] = useState<Record<string, ClientStage>>({});
+  const [announce, setAnnounce] = useState("");
+  const stageOfClient = (c: Client) => pending[c.name] ?? c.stage;
+  const moveClient = async (c: Client, stage: ClientStage) => {
+    if (stageOfClient(c) === stage) return;
+    if (pending[c.name]) {
+      toast.error(`Still saving ${c.name}’s last move.`);
+      return;
+    }
+    if (!ws.state.user) {
+      toast.error("Sign in to move clients between stages.");
+      return;
+    }
+    setPending((p) => ({ ...p, [c.name]: stage }));
+    try {
+      if (c.custom) {
+        const rec = ws.state.records.find((r) => r.id === c.id);
+        await ws.save("client", { ...(rec?.data ?? {}), stage }, c.id);
+      } else {
+        // The server gives each sample client one override record.
+        await ws.save("client", { override: true, name: c.name, stage }, c.stageRecordId);
+      }
+      setAnnounce(`${c.name} moved to ${stage}.`);
+      toast.success(`${c.name} moved to ${stage}.`);
+    } catch {
+      setAnnounce(`${c.name} couldn’t be moved.`);
+    } finally {
+      setPending(({ [c.name]: _done, ...rest }) => rest);
+    }
+  };
+  const [editing, setEditing] = useState<Client | null>(null);
+  const current = ws.allClients.find((x) => x.name === openName);
+  useEffect(() => {
+    // A client removed elsewhere can't stay open.
+    if (openName && !ws.loading && !ws.allClients.some((x) => x.name === openName)) {
+      toast.error(`${openName} is no longer in your clients.`);
+      openClient(undefined);
+    }
+  }, [openName, ws.allClients, ws.loading]);
   return (
     <>
       <PageTitle
         eyebrow="CLIENT INTELLIGENCE"
         title="The whole relationship."
-        description="Documents, decisions and people. One connected client view."
-      />
-      <div className="client-switcher">
-        {clients.map((x) => (
-          <button
-            className={selected === x.name ? "selected" : ""}
-            key={x.name}
-            onClick={() => setSelected(x.name)}
-          >
-            <span className={`client-mark ${x.color}`}>{x.initials}</span>
-            <div>
-              <strong>{x.name}</strong>
-              <small>{x.industry}</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-        ))}
+        description="Every client by stage. Drag a card or use its Move menu to change stage, or open it for the full picture."
+      >
+        <button className="primary-button" onClick={() => startAdd("Prospect")}>
+          <Plus size={16} /> Add client
+        </button>
+      </PageTitle>
+      <div className="kanban-toolbar">
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder="Search clients, industries or owners"
+        />
+        <span className="kanban-total">
+          {visible.length} of {ws.allClients.length} clients
+        </span>
       </div>
-      <div className="client-hero">
-        <div className={`client-mark large ${c.color}`}>{c.initials}</div>
-        <div>
-          <div className="inline-badges">
-            <Badge>Sample account</Badge>
-            {c.tags.map((t) => (
-              <Badge key={t}>{t}</Badge>
-            ))}
+      <div className="kanban-board" role="list" aria-label="Clients by stage">
+        {CLIENT_STAGES.map((stage) => {
+          const items = visible.filter((x) => stageOfClient(x) === stage);
+          return (
+            <section
+              key={stage}
+              role="listitem"
+              aria-label={`${stage}, ${items.length} clients`}
+              className={`kanban-column${dropStage === stage ? " drop-target" : ""}`}
+              onDragOver={(e) => {
+                if (!dragging) return;
+                e.preventDefault();
+                setDropStage(stage);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node))
+                  setDropStage(undefined);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const c = ws.allClients.find((x) => x.name === dragging);
+                setDragging(undefined);
+                setDropStage(undefined);
+                if (c) void moveClient(c, stage);
+              }}
+            >
+              <header className="kanban-column-head">
+                <span className={`kanban-dot ${STAGE_TONES[stage]}`} />
+                <strong>{stage}</strong>
+                <span className="kanban-count">{items.length}</span>
+                <button
+                  aria-label={`Add a client to ${stage}`}
+                  onClick={() => startAdd(stage)}
+                >
+                  <Plus size={15} />
+                </button>
+              </header>
+              <div className="kanban-cards">
+                {items.map((x) => (
+                  <div className="kanban-card-wrap" key={x.id ?? x.name}>
+                  <button
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", x.name);
+                      setDragging(x.name);
+                    }}
+                    onDragEnd={() => {
+                      setDragging(undefined);
+                      setDropStage(undefined);
+                    }}
+                    className={`kanban-card${openName === x.name ? " selected" : ""}${
+                      dragging === x.name ? " dragging" : ""
+                    }`}
+                    onClick={() => openClient(x.name)}
+                  >
+                    <span className="kanban-card-top">
+                      <span className={`client-mark ${x.color}`}>{x.initials}</span>
+                      <span className="kanban-card-title">
+                        <strong>{x.name}</strong>
+                        <small>{x.industry}</small>
+                      </span>
+                    </span>
+                    {x.opportunity && (
+                      <span className="kanban-card-focus">{x.opportunity}</span>
+                    )}
+                    {x.tags.length > 0 && (
+                      <span className="kanban-card-tags">
+                        {x.tags.slice(0, 2).map((t) => (
+                          <Badge key={t}>{t}</Badge>
+                        ))}
+                      </span>
+                    )}
+                    <span className="kanban-card-foot">
+                      <span className="kanban-owner">
+                        <span className="kanban-avatar">{initialsOf(x.owner)}</span>
+                        {x.owner}
+                      </span>
+                      <span className="kanban-docs">
+                        <FileText size={13} />
+                        {docCount(x.name, x.documents)}
+                      </span>
+                    </span>
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      className="kanban-move"
+                      aria-label={`Move ${x.name} to another stage`}
+                      disabled={!!pending[x.name]}
+                    >
+                      <MoreHorizontal size={16} />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuLabel>Move to</DropdownMenuLabel>
+                      {CLIENT_STAGES.filter((st) => st !== stageOfClient(x)).map((st) => (
+                        <DropdownMenuItem key={st} onSelect={() => void moveClient(x, st)}>
+                          {st}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  </div>
+                ))}
+                {items.length === 0 && (
+                  <div className="kanban-empty">
+                    {dragging ? "Drop here" : "No clients"}
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      <span className="sr-only" aria-live="polite">
+        {announce}
+      </span>
+      <Sheet open={!!current} onOpenChange={(o) => !o && openClient(undefined)}>
+        <SheetContent className="client-sheet w-full sm:max-w-[680px]">
+          {current && (
+            <ClientDetail
+              key={current.name}
+              c={current}
+              ws={ws}
+              ask={ask}
+              openSource={openSource}
+              upload={upload}
+              onMove={(stage) => void moveClient(current, stage)}
+              onEdit={current.custom ? () => setEditing(current) : undefined}
+              onDeleted={() => openClient(undefined)}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
+      <Sheet
+        open={!!adding || !!editing}
+        onOpenChange={(o) => {
+          if (o) return;
+          stopAdd();
+          setEditing(null);
+        }}
+      >
+        <SheetContent className="client-sheet w-full sm:max-w-[520px]">
+          {(adding || editing) && (
+            <AddClientForm
+              key={editing?.id ?? "new"}
+              ws={ws}
+              stage={editing?.stage ?? adding ?? "Prospect"}
+              existing={editing ?? undefined}
+              onDone={(name) => {
+                stopAdd();
+                setEditing(null);
+                if (name) openClient(name);
+              }}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}
+function AddClientForm({
+  ws,
+  stage,
+  existing,
+  onDone,
+}: {
+  ws: Workspace;
+  stage: ClientStage;
+  /** A custom client to edit instead of creating a new one. */
+  existing?: Client;
+  onDone: (name?: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    name: existing?.name ?? "",
+    industry: existing && existing.industry !== "Industry not set" ? existing.industry : "",
+    owner: existing && existing.owner !== "Unassigned" ? existing.owner : "",
+    stage,
+    opportunity: existing?.opportunity ?? "",
+    risk: existing?.risk ?? "",
+    description: existing?.description ?? "",
+    tags: existing?.tags.join(", ") ?? "",
+  });
+  const set = (k: keyof typeof form) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+      setForm({ ...form, [k]: e.target.value });
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = form.name.trim();
+    if (!name) return;
+    if (
+      ws.allClients.some(
+        (x) => x.name.toLowerCase() === name.toLowerCase() && (!existing || x.id !== existing.id),
+      )
+    ) {
+      toast.error(`${name} is already a client.`);
+      return;
+    }
+    setBusy(true);
+    try {
+      const previous = existing ? ws.state.records.find((r) => r.id === existing.id)?.data ?? {} : {};
+      await ws.save("client", {
+        ...previous,
+        name,
+        initials: initialsOf(name),
+        industry: form.industry.trim(),
+        owner: form.owner.trim(),
+        stage: form.stage,
+        opportunity: form.opportunity.trim(),
+        risk: form.risk.trim(),
+        description: form.description.trim(),
+        tags: form.tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+          .slice(0, 4),
+        color: existing?.color ?? CLIENT_COLORS[ws.allClients.length % CLIENT_COLORS.length],
+      }, existing?.id);
+      toast.success(existing ? `${name} updated.` : `${name} added to ${form.stage}.`);
+      onDone(name);
+    } catch {
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="client-sheet-form" onSubmit={submit}>
+      <SheetHeader className="client-sheet-header">
+        <SheetTitle>{existing ? `Edit ${existing.name}` : "Add a client"}</SheetTitle>
+        <SheetDescription>
+          Fill in what you know now. Everything except the name can be left for
+          later.
+        </SheetDescription>
+      </SheetHeader>
+      <div className="client-sheet-body">
+        <fieldset>
+          <legend>Basics</legend>
+          <label className="field-label">
+            Client name *
+            <input
+              required
+              autoFocus
+              maxLength={80}
+              value={form.name}
+              onChange={set("name")}
+              placeholder="Harbour Logistics"
+            />
+          </label>
+          <div className="field-row">
+            <label className="field-label">
+              Industry
+              <input
+                maxLength={60}
+                value={form.industry}
+                onChange={set("industry")}
+                placeholder="Transport & logistics"
+              />
+            </label>
+            <label className="field-label">
+              Stage
+              <select value={form.stage} onChange={set("stage")}>
+                {CLIENT_STAGES.map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+            </label>
           </div>
-          <h2>{c.name}</h2>
-          <p>{c.description}</p>
-        </div>
+          <label className="field-label">
+            Relationship owner
+            <input
+              maxLength={60}
+              value={form.owner}
+              onChange={set("owner")}
+              placeholder="Who owns the relationship"
+            />
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Relationship</legend>
+          <label className="field-label">
+            Current focus
+            <input
+              maxLength={120}
+              value={form.opportunity}
+              onChange={set("opportunity")}
+              placeholder="What are we exploring with them?"
+            />
+          </label>
+          <label className="field-label">
+            Key risk or open question
+            <input
+              maxLength={160}
+              value={form.risk}
+              onChange={set("risk")}
+              placeholder="e.g. Budget not confirmed for next year"
+            />
+          </label>
+          <label className="field-label">
+            Description
+            <textarea
+              maxLength={280}
+              rows={3}
+              value={form.description}
+              onChange={set("description")}
+              placeholder="One or two lines about the relationship"
+            />
+          </label>
+          <label className="field-label">
+            Tags
+            <input
+              maxLength={80}
+              value={form.tags}
+              onChange={set("tags")}
+              placeholder="Comma separated, e.g. Priority, Referral"
+            />
+          </label>
+        </fieldset>
+      </div>
+      <SheetFooter className="client-sheet-footer">
+        <button type="button" className="secondary-button" onClick={() => onDone()}>
+          Cancel
+        </button>
         <button
           className="primary-button"
-          onClick={() => ask(`Prepare me for a meeting with ${c.name}`)}
+          disabled={busy || !form.name.trim()}
+          type="submit"
         >
-          Prepare a meeting brief <ArrowUpRight size={16} />
+          {busy ? "Adding…" : "Add client"}
         </button>
-      </div>
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="wide-tabs">
-          {[
-            "Overview",
-            "Projects",
-            "Opportunities",
-            "Documents",
-            "People",
-            "Decisions",
-            "Actions",
-          ].map((x) => (
-            <TabsTrigger value={x} key={x}>
-              {x}
-            </TabsTrigger>
+      </SheetFooter>
+    </form>
+  );
+}
+function ClientDetail({
+  c,
+  ws,
+  ask,
+  openSource,
+  upload,
+  onMove,
+  onEdit,
+  onDeleted,
+}: {
+  c: Client;
+  ws: Workspace;
+  ask: Props["ask"];
+  openSource: Props["openSource"];
+  upload: Props["upload"];
+  onMove: (stage: ClientStage) => void;
+  onEdit?: () => void;
+  onDeleted: () => void;
+}) {
+  const [tab, setTab] = useState("Overview");
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const removeClient = async () => {
+    const id = c.custom ? c.id : c.stageRecordId;
+    if (!id) return;
+    setRemoving(true);
+    try {
+      await ws.remove(id);
+      toast.success(c.custom ? `${c.name} deleted.` : `${c.name} is back in its original stage.`);
+      if (c.custom) onDeleted();
+    } catch {
+    } finally {
+      setRemoving(false);
+      setConfirming(false);
+    }
+  };
+  const docIds = Array.from(
+    new Set([
+      ...c.documents,
+      ...ws.allSources.filter((s) => s.client === c.name).map((s) => s.id),
+    ]),
+  ).filter((id) => ws.allSources.some((s) => s.id === id));
+  const docs = docIds.map((id) => ws.allSources.find((s) => s.id === id)!);
+  const decisions = ws.allSources.filter(
+    (s) => s.kind === "Decision" && s.client === c.name,
+  );
+  const isNorthstar = c.name === "Northstar Bank";
+  return (
+    <div className="client-sheet-detail">
+      <SheetHeader className="client-sheet-header">
+        <div className="client-sheet-hero">
+          <div className={`client-mark large ${c.color}`}>{c.initials}</div>
+          <div>
+            <SheetTitle>{c.name}</SheetTitle>
+            <SheetDescription>
+              {c.description || `${c.industry} · owned by ${c.owner}`}
+            </SheetDescription>
+          </div>
+        </div>
+        <div className="client-sheet-meta">
+          <label className="stage-select">
+            <span className={`kanban-dot ${STAGE_TONES[c.stage]}`} />
+            <span className="sr-only">Stage</span>
+            <select
+              value={c.stage}
+              onChange={(e) => onMove(e.target.value as ClientStage)}
+            >
+              {CLIENT_STAGES.map((s) => (
+                <option key={s}>{s}</option>
+              ))}
+            </select>
+          </label>
+          <Badge>{c.custom ? "Added by you" : "Sample account"}</Badge>
+          {c.tags.map((t) => (
+            <Badge key={t}>{t}</Badge>
           ))}
-        </TabsList>
-        <TabsContent value="Overview">
-          <div className="two-column">
+          {ws.state.user && (c.custom || c.stageRecordId) && (
+            <span className="client-manage">
+              {onEdit && (
+                <button className="quiet-button" onClick={onEdit}>
+                  <Pencil size={13} /> Edit
+                </button>
+              )}
+              {confirming ? (
+                <>
+                  <span>{c.custom ? `Delete ${c.name}?` : "Reset to the original stage?"}</span>
+                  <button className="quiet-button danger-link" disabled={removing} onClick={() => void removeClient()}>
+                    {removing ? "Working…" : c.custom ? "Delete" : "Reset"}
+                  </button>
+                  <button className="quiet-button" onClick={() => setConfirming(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button className="quiet-button danger-link" onClick={() => setConfirming(true)}>
+                  {c.custom ? (
+                    <>
+                      <Trash2 size={13} /> Delete
+                    </>
+                  ) : (
+                    "Reset stage"
+                  )}
+                </button>
+              )}
+            </span>
+          )}
+        </div>
+        <div className="client-sheet-actions">
+          <button
+            className="primary-button"
+            onClick={() => ask(`Prepare me for a meeting with ${c.name}`)}
+          >
+            Prepare a meeting brief <ArrowUpRight size={16} />
+          </button>
+          <button className="secondary-button" onClick={upload}>
+            <Upload size={15} /> Add document
+          </button>
+        </div>
+      </SheetHeader>
+      <div className="client-sheet-body">
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="wide-tabs">
+            {[
+              "Overview",
+              "Documents",
+              "Decisions",
+              "Actions",
+              "Projects",
+              "Opportunities",
+              "People",
+            ].map((x) => (
+              <TabsTrigger value={x} key={x}>
+                {x}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <TabsContent value="Overview">
             <article className="panel">
               <h3>Relationship at a glance</h3>
               <dl>
+                <dt>Stage</dt>
+                <dd>{c.stage}</dd>
                 <dt>Relationship owner</dt>
                 <dd>{c.owner}</dd>
                 <dt>Industry</dt>
                 <dd>{c.industry}</dd>
                 <dt>Current focus</dt>
-                <dd>{c.opportunity}</dd>
-                <dt>Commercial status</dt>
-                <dd>Discovery / pilot · unconfirmed expansion</dd>
+                <dd>{c.opportunity || "Not captured yet"}</dd>
               </dl>
               <button
                 className="text-link"
@@ -558,32 +1149,26 @@ export function ClientsView({ ws, openSource, ask }: Props) {
               </button>
             </article>
             <article className="panel softly-blue">
-              <span className="eyebrow">AI INSIGHT · SAMPLE EVIDENCE</span>
+              <span className="eyebrow">
+                AI INSIGHT · {docs.length ? "SAMPLE EVIDENCE" : "NO EVIDENCE YET"}
+              </span>
               <h3>
-                {c.name === "Northstar Bank"
+                {isNorthstar
                   ? "A focused pilot, with a clear path forward."
                   : "An opportunity to build the evidence."}
               </h3>
-              <p>{c.risk}</p>
               <p>
-                Use the next conversation to clarify the decision, accountable
-                owner and evidence required.
+                {c.risk ||
+                  "Nothing has been uploaded for this client yet, so there is no evidence to reason over."}
               </p>
-              <SourcesList
-                ids={c.documents.slice(0, 2)}
-                ws={ws}
-                openSource={openSource}
-              />
+              <SourcesList ids={docIds.slice(0, 2)} ws={ws} openSource={openSource} />
             </article>
-          </div>
-          <article className="panel">
-            <h3>Recent activity</h3>
-            {c.documents.slice(0, 3).map((id) => {
-              const s = ws.allSources.find((d) => d.id === id)!;
-              return (
+            <article className="panel">
+              <h3>Recent activity</h3>
+              {docs.slice(0, 3).map((s) => (
                 <button
                   className="activity-row"
-                  key={id}
+                  key={s.id}
                   onClick={() => openSource(s)}
                 >
                   <span className="timeline-dot" />
@@ -595,68 +1180,20 @@ export function ClientsView({ ws, openSource, ask }: Props) {
                   </div>
                   <ArrowUpRight size={16} />
                 </button>
-              );
-            })}
-          </article>
-        </TabsContent>
-        <TabsContent value="Projects">
-          <article className="panel">
-            <Badge tone="blue">
-              {c.name === "Northstar Bank" ? "Pilot in delivery" : "Discovery"}
-            </Badge>
-            <h3>
-              {c.name === "Northstar Bank"
-                ? "Project Atlas"
-                : "Claims document triage discovery"}
-            </h3>
-            <p>
-              {c.name === "Northstar Bank"
-                ? "An internal knowledge assistant with permission-aware retrieval, citations and measurable answer quality."
-                : "Research and scope definition. No production claims deployment is recorded."}
-            </p>
-            <button
-              className="text-link"
-              onClick={() =>
-                ask(`What is the latest project status for ${c.name}?`)
-              }
-            >
-              Explore project status <ArrowUpRight size={14} />
-            </button>
-          </article>
-        </TabsContent>
-        <TabsContent value="Opportunities">
-          <article className="panel">
-            <Badge tone="green">
-              Potential opportunity · requires validation
-            </Badge>
-            <h3>{c.opportunity}</h3>
-            <p>
-              Connect the client’s requirements with reusable banking evidence
-              and the right internal experts. Validate domain fit and avoid
-              inferring a signed opportunity.
-            </p>
-            <SourcesList
-              ids={["banking-cases", ...c.documents.slice(0, 1)]}
-              ws={ws}
-              openSource={openSource}
-            />
-            <button
-              className="text-link"
-              onClick={() =>
-                ask(`Find relevant use cases and evidence gaps for ${c.name}`)
-              }
-            >
-              Explore the opportunity <ArrowRight size={14} />
-            </button>
-          </article>
-        </TabsContent>
-        <TabsContent value="Documents">
-          {c.documents.map((id) => {
-            const s = ws.allSources.find((d) => d.id === id)!;
-            return (
+              ))}
+              {docs.length === 0 && (
+                <p className="muted-note">
+                  No activity yet. Add a document tagged to {c.name} to start the
+                  timeline.
+                </p>
+              )}
+            </article>
+          </TabsContent>
+          <TabsContent value="Documents">
+            {docs.map((s) => (
               <button
                 className="document-row"
-                key={id}
+                key={s.id}
                 onClick={() => openSource(s)}
               >
                 <FileText size={22} />
@@ -669,40 +1206,105 @@ export function ClientsView({ ws, openSource, ask }: Props) {
                 <Badge>{s.status}</Badge>
                 <ArrowUpRight size={16} />
               </button>
-            );
-          })}
-        </TabsContent>
-        <TabsContent value="People">
-          <PeopleView ws={ws} openSource={openSource} ask={ask} compact />
-        </TabsContent>
-        <TabsContent value="Decisions">
-          {ws.allSources
-            .filter((s) => s.kind === "Decision" && s.client === c.name)
-            .map((s) => (
+            ))}
+            {docs.length === 0 && (
+              <Empty
+                title="No documents yet"
+                description={`Upload a file and choose ${c.name} as the client to see it here.`}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="Decisions">
+            {decisions.map((s) => (
               <article className="panel" key={s.id}>
                 <h3>{s.title}</h3>
                 <p>{s.content}</p>
                 <SourcesList ids={[s.id]} ws={ws} openSource={openSource} />
               </article>
             ))}
-          {c.name !== "Northstar Bank" && (
-            <Empty
-              title="No recorded decisions yet"
-              description="Approved decisions from conversations will appear in Knowledge → Decisions & memory."
+            {decisions.length === 0 && (
+              <Empty
+                title="No recorded decisions yet"
+                description="Approved decisions from conversations will appear in Knowledge → Decisions & memory."
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="Actions">
+            <ActionsView
+              ws={ws}
+              openSource={openSource}
+              ask={ask}
+              compact
+              client={c.name}
             />
-          )}
-        </TabsContent>
-        <TabsContent value="Actions">
-          <ActionsView
-            ws={ws}
-            openSource={openSource}
-            ask={ask}
-            compact
-            client={c.name}
-          />
-        </TabsContent>
-      </Tabs>
-    </>
+          </TabsContent>
+          <TabsContent value="Projects">
+            {c.custom ? (
+              <Empty
+                title="No projects recorded yet"
+                description={`Projects for ${c.name} will appear once documents or decisions reference them.`}
+              />
+            ) : (
+              <article className="panel">
+                <Badge tone="blue">
+                  {isNorthstar ? "Pilot in delivery" : "Discovery"}
+                </Badge>
+                <h3>
+                  {isNorthstar ? "Project Atlas" : "Claims document triage discovery"}
+                </h3>
+                <p>
+                  {isNorthstar
+                    ? "An internal knowledge assistant with permission-aware retrieval, citations and measurable answer quality."
+                    : "Research and scope definition. No production claims deployment is recorded."}
+                </p>
+                <button
+                  className="text-link"
+                  onClick={() =>
+                    ask(`What is the latest project status for ${c.name}?`)
+                  }
+                >
+                  Explore project status <ArrowUpRight size={14} />
+                </button>
+              </article>
+            )}
+          </TabsContent>
+          <TabsContent value="Opportunities">
+            {c.opportunity ? (
+              <article className="panel">
+                <Badge tone="green">Potential opportunity · requires validation</Badge>
+                <h3>{c.opportunity}</h3>
+                <p>
+                  Connect the client’s requirements with reusable evidence and the
+                  right internal experts. Validate fit and avoid inferring a signed
+                  opportunity.
+                </p>
+                <SourcesList
+                  ids={c.custom ? docIds.slice(0, 2) : ["banking-cases", ...docIds.slice(0, 1)]}
+                  ws={ws}
+                  openSource={openSource}
+                />
+                <button
+                  className="text-link"
+                  onClick={() =>
+                    ask(`Find relevant use cases and evidence gaps for ${c.name}`)
+                  }
+                >
+                  Explore the opportunity <ArrowRight size={14} />
+                </button>
+              </article>
+            ) : (
+              <Empty
+                title="No opportunity captured"
+                description="Add a current focus for this client, or ask the assistant to look for one."
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="People">
+            <PeopleView ws={ws} openSource={openSource} ask={ask} compact />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
   );
 }
 export function PeopleView({
@@ -740,23 +1342,36 @@ export function PeopleView({
       <div className="people-grid">
         {results.map((p) => (
           <button
-            className="person-card"
+            className={`person-card${p.photo ? " person-card--photo" : ""}`}
             key={p.id}
             onClick={() => setPerson(p)}
+            style={p.photo ? { backgroundImage: `url(${p.photo})` } : undefined}
           >
-            <span className={`person-avatar ${p.color}`}>{p.initials}</span>
-            <h3>{p.name}</h3>
-            <p>{p.role}</p>
-            <small>{p.location} · Sample profile</small>
-            <div className="skill-tags">
-              {p.skills.map((s) => (
-                <Badge key={s}>{s}</Badge>
-              ))}
+            {p.photo && <span className="person-card-shade" aria-hidden="true" />}
+            <div className="person-card-top">
+              <span className="person-pill person-pill--role">{p.badge}</span>
+              <span className="person-pill person-pill--meta">
+                {p.evidence.length} sources
+              </span>
             </div>
-            <div className="person-reason">{p.description}</div>
-            <span className="card-link">
-              {p.evidence.length} supporting sources <ArrowUpRight size={15} />
-            </span>
+            <div className="person-card-body">
+              {!p.photo && (
+                <span className={`person-avatar ${p.color}`}>{p.initials}</span>
+              )}
+              <h3>{p.name}</h3>
+              <p className="person-card-role">
+                {p.role} · {p.location}
+              </p>
+              <p className="person-card-focus">{p.focus}</p>
+              <ul className="person-card-highlights">
+                {p.highlights.map((h) => (
+                  <li key={h}>{h}</li>
+                ))}
+              </ul>
+              <span className="person-card-cta">
+                View profile <ArrowUpRight size={15} />
+              </span>
+            </div>
           </button>
         ))}
       </div>
@@ -776,9 +1391,17 @@ export function PeopleView({
           </DialogHeader>
           {person && (
             <>
-              <span className={`person-avatar ${person.color}`}>
-                {person.initials}
-              </span>
+              {person.photo ? (
+                <img
+                  className="person-dialog-photo"
+                  src={person.photo}
+                  alt=""
+                />
+              ) : (
+                <span className={`person-avatar ${person.color}`}>
+                  {person.initials}
+                </span>
+              )}
               <p>{person.description}</p>
               <div className="skill-tags">
                 {person.skills.map((s) => (
@@ -826,9 +1449,15 @@ export function ActionsView({
   client?: string;
 }) {
   const [filter, setFilter] = useState("Open");
-  const [review, setReview] = useState<Record<string, any> | null>(null);
+  const [review, setReviewState] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState("");
+  // Each action opens with its own outcome text, never the previous one's.
+  const setReview = (a: Record<string, any> | null) => {
+    setReviewState(a);
+    setOutcome(a?.outcome ?? "");
+  };
+  const DONE = ["Completed", "Dismissed"];
   const custom: Record<string, any>[] = ws.state.records
     .filter((r) => r.kind === "action")
     .map((r) => ({ ...r.data, id: r.data.id ?? r.id }));
@@ -839,29 +1468,45 @@ export function ActionsView({
   const shown = actions.filter(
     (a) =>
       filter === "All" ||
-      (filter === "Open"
-        ? !["Completed", "Dismissed", "Approved draft"].includes(a.status)
-        : a.status === filter),
+      (filter === "Open" ? !DONE.includes(a.status) : a.status === filter),
   );
   async function change(a: Record<string, any>, status: string) {
+    if (busy) return;
+    if (!ws.state.user) {
+      toast.error("Sign in to update actions.");
+      return;
+    }
     setBusy(true);
     try {
+      const reopening = !DONE.includes(status) && DONE.includes(a.status);
       await ws.save(
         "action",
-        { ...a, status, ...(status === "Completed" ? { outcome } : {}) },
+        {
+          ...a,
+          status: reopening ? (a.kind === "External draft" ? "Awaiting review" : "Open") : status,
+          ...(status === "Completed" ? { outcome: outcome.trim(), completedAt: new Date().toISOString() } : {}),
+        },
         a.id,
       );
+      // One outcome per action: a fixed id updates it instead of adding another.
       if (status === "Completed" && outcome.trim())
-        await ws.save("outcome", {
-          title: a.title,
-          content: outcome,
-          client: a.client,
-          source: a.source,
-        });
+        await ws.save(
+          "outcome",
+          {
+            title: a.title,
+            content: outcome.trim(),
+            client: a.client,
+            source: a.source,
+            actionId: a.id,
+          },
+          `fixed-outcome-${String(a.id).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60)}`,
+        );
       toast.success(
         status === "Approved draft"
           ? "Draft approved. No external message has been sent."
-          : `Action ${status.toLowerCase()}`,
+          : reopening
+            ? "Action reopened"
+            : `Action ${status.toLowerCase()}`,
       );
       setReview(null);
       setOutcome("");
@@ -882,7 +1527,7 @@ export function ActionsView({
       <div className="toolbar">
         <Tabs value={filter} onValueChange={setFilter}>
           <TabsList>
-            {["Open", "Completed", "All"].map((x) => (
+            {["Open", "Completed", "Dismissed", "All"].map((x) => (
               <TabsTrigger key={x} value={x}>
                 {x}
               </TabsTrigger>
@@ -890,12 +1535,7 @@ export function ActionsView({
           </TabsList>
         </Tabs>
         <span className="muted-note">
-          {
-            actions.filter(
-              (a) => !["Completed", "Dismissed"].includes(a.status),
-            ).length
-          }{" "}
-          active commitments
+          {actions.filter((a) => !DONE.includes(a.status)).length} active commitments
         </span>
       </div>
       <div className="action-list">
@@ -964,40 +1604,62 @@ export function ActionsView({
                   openSource={openSource}
                 />
               )}
-              <label className="field-label">
-                Outcome / learning
-                <textarea
-                  value={outcome}
-                  onChange={(e) => setOutcome(e.target.value)}
-                  placeholder="What happened? Capture a lesson for the next engagement."
-                />
-              </label>
-              <div className="dialog-actions">
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={() => void change(review, "Dismissed")}
-                >
-                  Dismiss
-                </button>
-                {review.kind === "External draft" &&
-                  review.status !== "Approved draft" && (
-                    <button
-                      className="primary-button"
-                      disabled={busy}
-                      onClick={() => void change(review, "Approved draft")}
-                    >
-                      Approve draft
-                    </button>
+              {DONE.includes(review.status) ? (
+                <>
+                  {review.outcome && (
+                    <div className="field-label">
+                      Outcome / learning
+                      <p className="prose-content">{review.outcome}</p>
+                    </div>
                   )}
-                <button
-                  className="primary-button"
-                  disabled={busy}
-                  onClick={() => void change(review, "Completed")}
-                >
-                  Mark complete
-                </button>
-              </div>
+                  <div className="dialog-actions">
+                    <button className="secondary-button" disabled={busy} onClick={() => void change(review, "Open")}>
+                      Reopen
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="field-label">
+                    Outcome / learning
+                    <textarea
+                      value={outcome}
+                      maxLength={4000}
+                      onChange={(e) => setOutcome(e.target.value)}
+                      placeholder="What happened? Capture a lesson for the next engagement."
+                    />
+                  </label>
+                  {review.kind === "External draft" && review.status !== "Approved draft" && (
+                    <p className="muted-note">Approve this draft before marking it complete. Approving doesn’t send anything.</p>
+                  )}
+                  <div className="dialog-actions">
+                    <button
+                      className="secondary-button"
+                      disabled={busy}
+                      onClick={() => void change(review, "Dismissed")}
+                    >
+                      Dismiss
+                    </button>
+                    {review.kind === "External draft" && review.status !== "Approved draft" ? (
+                      <button
+                        className="primary-button"
+                        disabled={busy}
+                        onClick={() => void change(review, "Approved draft")}
+                      >
+                        Approve draft
+                      </button>
+                    ) : (
+                      <button
+                        className="primary-button"
+                        disabled={busy}
+                        onClick={() => void change(review, "Completed")}
+                      >
+                        Mark complete
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
         </DialogContent>
@@ -1008,10 +1670,12 @@ export function ActionsView({
 export function SavedWork({ ws, ask, openSource }: Props) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Record<string, any> | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const list = ws.state.records.filter(
     (r) =>
       ["saved", "memory", "outcome"].includes(r.kind) &&
-      String(r.data.title).toLowerCase().includes(q.toLowerCase()),
+      String(r.data.title ?? "").toLowerCase().includes(q.trim().toLowerCase()),
   );
   return (
     <>
@@ -1059,7 +1723,15 @@ export function SavedWork({ ws, ask, openSource }: Props) {
           }
         />
       )}
-      <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
+      <Dialog
+        open={!!open}
+        onOpenChange={(o) => {
+          if (!o) {
+            setOpen(null);
+            setConfirming(false);
+          }
+        }}
+      >
         <DialogContent className="detail-dialog wide-dialog">
           <DialogHeader>
             <DialogTitle>{open?.title}</DialogTitle>
@@ -1070,23 +1742,120 @@ export function SavedWork({ ws, ask, openSource }: Props) {
             </DialogDescription>
           </DialogHeader>
           <div className="prose-content scroll-prose">{open?.content}</div>
-          <button
-            className="primary-button"
-            onClick={() => downloadText(open?.title, open?.content)}
-          >
-            Export Markdown <Download size={15} />
-          </button>
+          <div className="dialog-actions">
+            {confirming ? (
+              <>
+                <span className="muted-note">
+                  {open?.kind === "memory"
+                    ? "Remove this from organisational memory? Answers will stop using it."
+                    : "Delete this permanently?"}
+                </span>
+                <button className="secondary-button" onClick={() => setConfirming(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="secondary-button danger-button"
+                  disabled={removing}
+                  onClick={async () => {
+                    if (!open) return;
+                    setRemoving(true);
+                    try {
+                      await ws.remove(open.id);
+                      toast.success("Deleted");
+                      setOpen(null);
+                    } catch {
+                    } finally {
+                      setRemoving(false);
+                      setConfirming(false);
+                    }
+                  }}
+                >
+                  <Trash2 size={15} /> {removing ? "Deleting…" : "Delete"}
+                </button>
+              </>
+            ) : (
+              <>
+                {ws.state.user && (
+                  <button className="secondary-button danger-button" onClick={() => setConfirming(true)}>
+                    <Trash2 size={15} /> Delete
+                  </button>
+                )}
+                <button
+                  className="primary-button"
+                  onClick={() => downloadText(open?.title, open?.content)}
+                >
+                  Export Markdown <Download size={15} />
+                </button>
+              </>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </>
   );
 }
+/** A whole-number field that can be cleared while typing and settles on blur. */
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const settle = (raw: string) => {
+    const n = Math.round(Number(raw));
+    const next = raw.trim() === "" || !Number.isFinite(n) ? value : Math.min(max, Math.max(min, n));
+    setText(String(next));
+    onChange(next);
+  };
+  return (
+    <label className="field-label">
+      {label}
+      <input
+        type="number"
+        inputMode="numeric"
+        step={1}
+        min={min}
+        max={max}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const n = Number(e.target.value);
+          if (e.target.value.trim() !== "" && Number.isInteger(n) && n >= min && n <= max) onChange(n);
+        }}
+        onBlur={(e) => settle(e.target.value)}
+      />
+    </label>
+  );
+}
+const PRICING_KEY = "ia-pricing-comparison";
 export function Pricing({ ws, openSource }: Props) {
   const [weeks, setWeeks] = useState(12);
   const [consultants, setConsultants] = useState(2);
   const [contingency, setContingency] = useState(10);
   const [cost, setCost] = useState(0);
-  const [saved, setSaved] = useState<{ label: string; total: number }[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSavedState] = useState<{ label: string; total: number }[]>([]);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PRICING_KEY);
+      if (raw) setSavedState(JSON.parse(raw));
+    } catch {}
+  }, []);
+  const setSaved = (list: { label: string; total: number }[]) => {
+    setSavedState(list);
+    try {
+      sessionStorage.setItem(PRICING_KEY, JSON.stringify(list));
+    } catch {}
+  };
   const base = weeks * 5 * (1200 * 0.5 + 850 * consultants + 950 * 0.5);
   const total = Math.round(base * (1 + contingency / 100));
   return (
@@ -1103,55 +1872,16 @@ export function Pricing({ ws, openSource }: Props) {
       <div className="two-column">
         <div className="panel">
           <h3>Your delivery scenario</h3>
-          <label className="field-label">
-            Duration (weeks)
-            <input
-              type="number"
-              min="1"
-              max="104"
-              value={weeks}
-              onChange={(e) =>
-                setWeeks(Math.min(104, Math.max(1, Number(e.target.value))))
-              }
-            />
-          </label>
-          <label className="field-label">
-            Full-time consultants
-            <input
-              type="number"
-              min="1"
-              max="30"
-              value={consultants}
-              onChange={(e) =>
-                setConsultants(
-                  Math.min(30, Math.max(1, Number(e.target.value))),
-                )
-              }
-            />
-          </label>
-          <label className="field-label">
-            Contingency (%)
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={contingency}
-              onChange={(e) =>
-                setContingency(
-                  Math.min(100, Math.max(0, Number(e.target.value))),
-                )
-              }
-            />
-          </label>
-          <label className="field-label">
-            Your authorised total delivery cost (£, optional)
-            <input
-              type="number"
-              min="0"
-              value={cost}
-              onChange={(e) => setCost(Math.max(0, Number(e.target.value)))}
-            />
-          </label>
+          <NumberField label="Duration (weeks)" value={weeks} min={1} max={104} onChange={setWeeks} />
+          <NumberField label="Full-time consultants" value={consultants} min={1} max={30} onChange={setConsultants} />
+          <NumberField label="Contingency (%)" value={contingency} min={0} max={100} onChange={setContingency} />
+          <NumberField
+            label="Your authorised total delivery cost (£, optional)"
+            value={cost}
+            min={0}
+            max={100_000_000}
+            onChange={setCost}
+          />
           <small className="muted-note">
             Includes an architect and delivery manager, each at 50%. Five
             working days per week.
@@ -1171,10 +1901,15 @@ export function Pricing({ ws, openSource }: Props) {
             {cost > 0 && (
               <>
                 <dt>Illustrative margin</dt>
-                <dd>{(((total - cost) / total) * 100).toFixed(1)}%</dd>
+                <dd className={cost > total ? "negative" : undefined}>{(((total - cost) / total) * 100).toFixed(1)}%</dd>
               </>
             )}
           </dl>
+          {cost > total && (
+            <p className="pricing-warning" role="alert">
+              Cost is higher than the price. This scenario loses £{(cost - total).toLocaleString("en-GB")}.
+            </p>
+          )}
           <button
             className="secondary-button"
             onClick={() =>
@@ -1192,18 +1927,28 @@ export function Pricing({ ws, openSource }: Props) {
           </button>
           <button
             className="primary-button"
+            disabled={saving}
             onClick={async () => {
+              if (!ws.state.user) {
+                toast.error("Sign in to save scenarios.");
+                return;
+              }
+              setSaving(true);
               try {
+                const margin = cost > 0 ? `\nAuthorised cost: £${cost.toLocaleString("en-GB")}. Illustrative margin: ${(((total - cost) / total) * 100).toFixed(1)}%.` : "";
                 await ws.save("saved", {
-                  title: `Pricing scenario · ${weeks} weeks`,
-                  content: `Illustrative planning estimate: £${total.toLocaleString()}.\nDuration: ${weeks} weeks. Consultants: ${consultants}. Contingency: ${contingency}%.\nArchitect and delivery manager at 50%.\nExcludes tax, expenses, third-party services. Sample reference rates; not an approved offer.`,
+                  title: `Pricing scenario · ${weeks} weeks · ${consultants} consultants`,
+                  content: `Illustrative planning estimate: £${total.toLocaleString("en-GB")}.\nDuration: ${weeks} weeks. Consultants: ${consultants}. Contingency: ${contingency}%.${margin}\nArchitect and delivery manager at 50%.\nExcludes tax, expenses, third-party services. Sample reference rates; not an approved offer.`,
                   sourceIds: ["pricing-current"],
                 });
-                toast.success("Scenario saved");
-              } catch {}
+                toast.success("Scenario saved to Saved work");
+              } catch {
+              } finally {
+                setSaving(false);
+              }
             }}
           >
-            Save scenario
+            {saving ? "Saving…" : "Save scenario"}
           </button>
         </div>
       </div>
@@ -1213,7 +1958,7 @@ export function Pricing({ ws, openSource }: Props) {
           {saved.map((s, i) => (
             <div className="comparison-row" key={i}>
               <span>{s.label}</span>
-              <strong>£{s.total.toLocaleString()}</strong>
+              <strong>£{s.total.toLocaleString("en-GB")}</strong>
               <button
                 aria-label={`Remove scenario ${i + 1}`}
                 onClick={() => setSaved(saved.filter((_, j) => j !== i))}
@@ -1232,8 +1977,22 @@ export function Pricing({ ws, openSource }: Props) {
     </>
   );
 }
+const PROPOSAL_ID = "fixed-proposal-northstar-rfp";
 export function Proposal({ ws, ask, openSource, upload }: Props) {
-  const [checks, setChecks] = useState<string[]>([]);
+  // Review ticks are stored per RFP so they survive navigation and reloads.
+  const stored = ws.state.records.find((r) => r.kind === "proposal" && r.data.rfp === "northstar-rfp");
+  const [checks, setChecksState] = useState<string[]>([]);
+  const [savingReview, setSavingReview] = useState(false);
+  useEffect(() => {
+    if (Array.isArray(stored?.data.checks)) setChecksState(stored.data.checks);
+  }, [stored?.updated_at]);
+  const setChecks = (next: string[]) => {
+    setChecksState(next);
+    if (!ws.state.user) return;
+    void ws
+      .save("proposal", { rfp: "northstar-rfp", title: "Northstar RFP review", checks: next }, stored?.id ?? PROPOSAL_ID)
+      .catch(() => setChecksState(checks));
+  };
   const requirements = [
     [
       "R1",
@@ -1302,7 +2061,7 @@ export function Proposal({ ws, ask, openSource, upload }: Props) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Reviewed</TableHead>
+              <TableHead className="col-check">Reviewed</TableHead>
               <TableHead>Requirement</TableHead>
               <TableHead>Evidence status</TableHead>
               <TableHead>Source</TableHead>
@@ -1311,7 +2070,7 @@ export function Proposal({ ws, ask, openSource, upload }: Props) {
           <TableBody>
             {requirements.map(([id, title, source, status]) => (
               <TableRow key={id}>
-                <TableCell>
+                <TableCell className="col-check">
                   <Checkbox
                     aria-label={`Review requirement ${id}`}
                     checked={checks.includes(id)}
@@ -1368,9 +2127,20 @@ export function Proposal({ ws, ask, openSource, upload }: Props) {
           </p>
           <button
             className="text-link"
+            disabled={savingReview}
             onClick={async () => {
+              if (!ws.state.user) {
+                toast.error("Sign in to save the compliance review.");
+                return;
+              }
+              setSavingReview(true);
               try {
+                // Saving again updates the same review in Saved work.
+                const existing = ws.state.records.find(
+                  (r) => r.kind === "saved" && r.data.rfpReview === "northstar-rfp",
+                );
                 await ws.save("saved", {
+                  rfpReview: "northstar-rfp",
                   title: "Northstar RFP · Compliance review",
                   content: requirements
                     .map(
@@ -1379,9 +2149,12 @@ export function Proposal({ ws, ask, openSource, upload }: Props) {
                     )
                     .join("\n"),
                   sourceIds: ["northstar-rfp"],
-                });
-                toast.success("Compliance review saved");
-              } catch {}
+                }, existing?.id);
+                toast.success(existing ? "Compliance review updated" : "Compliance review saved");
+              } catch {
+              } finally {
+                setSavingReview(false);
+              }
             }}
           >
             Save compliance review <ArrowRight size={14} />
@@ -1411,13 +2184,18 @@ export function ClaimChecker({ ws, openSource, initialClaim }: Props) {
           <textarea
             className="large-textarea"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            maxLength={30000}
+            onChange={(e) => {
+              setText(e.target.value);
+              // Results describe the old text, so clear them as soon as it changes.
+              setResult(null);
+            }}
             placeholder="Paste the important statements from a pitch, proposal, brief or CV…"
           />
         </label>
         <div className="split-row">
           <small className="muted-note">
-            Text-based screening. Human review remains essential.
+            Text-based screening. Human review remains essential. {text.length.toLocaleString()} / 30,000 characters.
           </small>
           <button
             className="primary-button"
@@ -1443,7 +2221,16 @@ export function ClaimChecker({ ws, openSource, initialClaim }: Props) {
           <div className="notice">
             <AlertTriangle size={17} />
             {result.method}
+            {result.total > result.checked
+              ? ` Checked the first ${result.checked} of ${result.total} claims; split the rest into another check.`
+              : ""}
           </div>
+          {!result.claims.length && (
+            <Empty
+              title="No checkable claims found"
+              description="Write each claim as a full sentence on its own line (more than 15 characters)."
+            />
+          )}
           {result.claims.map((c: any, i: number) => (
             <article className="panel" key={i}>
               <Badge
@@ -1474,18 +2261,256 @@ export function ClaimChecker({ ws, openSource, initialClaim }: Props) {
     </>
   );
 }
+function ModelsPanel({ ws }: { ws: Workspace }) {
+  const [catalog, setCatalog] = useState<{
+    configured: boolean;
+    provider: string;
+    providerNote: string;
+    embedding: string;
+    embeddingNote: string;
+    store: string;
+    storeNote: string;
+    selected: { model: string; fast: string };
+    presets: {
+      id: string;
+      label: string;
+      name: string;
+      model: string;
+      fast: string;
+      note: string;
+      size: string;
+    }[];
+    models: string[];
+  } | null>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [reload, setReload] = useState(0);
+  const [busy, setBusy] = useState("");
+  const signedIn = !!ws.state.user;
+  useEffect(() => {
+    if (!signedIn) {
+      setCatalog(null);
+      setStatus("ready");
+      return;
+    }
+    let live = true;
+    setStatus("loading");
+    api("/api/models")
+      .then((data) => {
+        if (!live) return;
+        setCatalog(data as NonNullable<typeof catalog>);
+        setStatus("ready");
+      })
+      .catch(() => {
+        if (!live) return;
+        setCatalog(null);
+        setStatus("error");
+      });
+    return () => {
+      live = false;
+    };
+  }, [signedIn, ws.state.aiModel, ws.state.aiFastModel, reload]);
+  async function choose(model: string, fast: string) {
+    if (!ws.state.user) {
+      toast.error("Sign in to change models.");
+      return;
+    }
+    if (!model) return;
+    setBusy("save");
+    try {
+      await api("/api/models", { model, fastModel: fast || model });
+      await ws.refresh();
+      toast.success(`Ask will use ${model}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+  if (!signedIn) {
+    return (
+      <div className="panel model-hero">
+        <Badge>Sign in required</Badge>
+        <h3>Manage the models Ask uses</h3>
+        <p>
+          Sign in to choose Recommended, Balanced or Fastest, or pick a model
+          from your approved gateway. Keys stay on the server.
+        </p>
+        <a className="primary-button" href="/signin-with-chatgpt?return_to=/#settings-models">
+          Sign in
+        </a>
+      </div>
+    );
+  }
+  if (status === "loading" && !catalog) {
+    return (
+      <div className="panel model-hero" aria-busy="true">
+        <Badge>Loading</Badge>
+        <h3>We've picked the best model for Ask</h3>
+        <p>Reading your gateway and saved model choice…</p>
+      </div>
+    );
+  }
+  if (status === "error") {
+    return (
+      <div className="panel model-hero">
+        <Badge tone="amber">Couldn’t load</Badge>
+        <h3>Models aren’t available right now</h3>
+        <p>
+          The gateway list couldn’t be loaded. Check that you are signed in,
+          then try again.
+        </p>
+        <button
+          className="secondary-button"
+          onClick={() => setReload((n) => n + 1)}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  const selected = catalog?.selected.model || ws.state.aiModel;
+  const fast = catalog?.selected.fast || ws.state.aiFastModel;
+  const defaults = catalog?.presets ?? [];
+  const ids = [
+    ...new Set([selected, fast, ...(catalog?.models ?? [])].filter(Boolean)),
+  ];
+  return (
+    <>
+      <div className="panel model-hero">
+        <Badge tone={catalog?.configured ? "green" : "amber"}>
+          {catalog?.configured ? "Gateway connected" : "Not connected"}
+        </Badge>
+        <h3>We've picked the best model for Ask</h3>
+        <p>
+          {selected
+            ? `Active: ${selected}${fast && fast !== selected ? ` · Fast: ${fast}` : ""}`
+            : "Connect an approved gateway to choose a model."}
+        </p>
+      </div>
+      <div className="model-preset-list" role="group" aria-label="Model presets">
+        {defaults.map((preset) => {
+          const on =
+            !!preset.model &&
+            selected === preset.model &&
+            (fast || selected) === preset.fast;
+          return (
+            <button
+              type="button"
+              key={preset.id}
+              className={`model-preset${on ? " is-active" : ""}`}
+              aria-pressed={on}
+              disabled={!!busy || !catalog?.configured || !preset.model}
+              onClick={() => void choose(preset.model, preset.fast)}
+            >
+              <span className="model-preset-label">{preset.label}</span>
+              <strong>{preset.name}</strong>
+              <small>
+                {preset.note}
+                {preset.size ? ` · ${preset.size}` : ""}
+              </small>
+              {on ? <Check size={16} aria-hidden="true" /> : null}
+            </button>
+          );
+        })}
+      </div>
+      {!!ids.length && (
+        <div className="panel">
+          <h3>Select a different model</h3>
+          <p className="muted-note">
+            Chat model answers questions. Fast model writes related questions.
+          </p>
+          <div className="model-select-row">
+            <label htmlFor="chat-model">
+              Chat model
+              <select
+                id="chat-model"
+                value={selected}
+                disabled={!!busy || !catalog?.configured}
+                onChange={(e) => void choose(e.target.value, fast || e.target.value)}
+              >
+                {ids.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label htmlFor="fast-model">
+              Fast model
+              <select
+                id="fast-model"
+                value={fast || selected}
+                disabled={!!busy || !catalog?.configured}
+                onChange={(e) => void choose(selected || e.target.value, e.target.value)}
+              >
+                {ids.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      )}
+      <div className="panel">
+        <h3>Data handling & privacy</h3>
+        <div className="setting-row">
+          <div>
+            <strong>LLM provider</strong>
+            <p>
+              {catalog?.provider ?? "Not connected"}. {catalog?.providerNote}
+            </p>
+          </div>
+          <Cpu size={18} aria-hidden="true" />
+        </div>
+        <div className="setting-row">
+          <div>
+            <strong>Embedding preference</strong>
+            <p>
+              {catalog?.embedding ?? "Lexical retrieval"}. {catalog?.embeddingNote}
+            </p>
+          </div>
+          <Sparkles size={18} aria-hidden="true" />
+        </div>
+        <div className="setting-row">
+          <div>
+            <strong>Workspace store</strong>
+            <p>
+              {catalog?.store ?? "Cloudflare D1 + R2"}. {catalog?.storeNote}
+            </p>
+          </div>
+          <Database size={18} aria-hidden="true" />
+        </div>
+      </div>
+    </>
+  );
+}
 export function Settings({ ws, setView }: Props) {
-  const [tab, setTab] = useState("Integrations");
+  const SETTINGS_TABS = ["Integrations", "Models", "MCP servers", "Preferences", "Governance", "Product phases"];
+  const slug = (t: string) => t.toLowerCase().replaceAll(" ", "-");
+  // #settings-mcp-servers opens that tab directly.
+  const [tab, setTabState] = useState(() => {
+    if (typeof window === "undefined") return "Integrations";
+    const h = window.location.hash.replace(/^#settings-?/, "");
+    return SETTINGS_TABS.find((t) => slug(t) === h) ?? "Integrations";
+  });
+  const setTab = (t: string) => {
+    setTabState(t);
+    window.history.replaceState(null, "", `/#settings-${slug(t)}`);
+  };
   const [add, setAdd] = useState(false);
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState("");
   const [selected, setSelected] = useState<any>(null);
   const [connector, setConnector] = useState("");
+  const [removingServer, setRemovingServer] = useState("");
   const settings = ws.state.records.find((r) => r.kind === "settings");
   const servers = ws.state.records.filter((r) => r.kind === "mcp");
   const [notion, setNotion] = useState<{
     connected: boolean;
+    reauth?: boolean;
     connectedAt?: string;
     server: string;
   } | null>(null);
@@ -1568,6 +2593,7 @@ export function Settings({ ws, setView }: Props) {
         <TabsList className="wide-tabs">
           {[
             "Integrations",
+            "Models",
             "MCP servers",
             "Preferences",
             "Governance",
@@ -1593,8 +2619,8 @@ export function Settings({ ws, setView }: Props) {
                 <p>{c.description}</p>
                 {c.name === "Notion" ? (
                   <>
-                    <Badge tone={notion?.connected ? "green" : "neutral"}>
-                      {notion?.connected ? "Connected · MCP" : "Not connected"}
+                    <Badge tone={notion?.reauth ? "amber" : notion?.connected ? "green" : "neutral"}>
+                      {notion?.reauth ? "Reconnect needed" : notion?.connected ? "Connected · MCP" : "Not connected"}
                     </Badge>
                     {notion?.connected ? (
                       <button
@@ -1659,18 +2685,16 @@ export function Settings({ ws, setView }: Props) {
             </Badge>
             <p>
               {ws.state.aiConfigured
-                ? "Ask uses the configured gateway and supplies accessible evidence with each question."
-                : "Ask currently returns searchable evidence and structured draft templates. Connect an approved OpenAI-compatible gateway, such as LiteLLM, to enable generated answers."}
+                ? `Ask uses ${ws.state.aiModel || "the configured model"}. Change it in Models.`
+                : "Ask currently returns searchable evidence and structured draft templates. Connect an approved OpenAI-compatible gateway to enable generated answers."}
             </p>
-            <details>
-              <summary>Administrator configuration</summary>
-              <p>
-                Configure AI_GATEWAY_URL, AI_GATEWAY_KEY and AI_MODEL as
-                server-side runtime values. Credentials never belong in a
-                browser form or saved document.
-              </p>
-            </details>
+            <button className="secondary-button" onClick={() => setTab("Models")}>
+              Manage models
+            </button>
           </div>
+        </TabsContent>
+        <TabsContent value="Models">
+          <ModelsPanel ws={ws} />
         </TabsContent>
         <TabsContent value="MCP servers">
           <div className="toolbar">
@@ -1730,9 +2754,12 @@ export function Settings({ ws, setView }: Props) {
                   <Switch
                     aria-label={`Enable ${r.data.title}`}
                     checked={!!r.data.enabled}
+                    // A server can only be switched on after a successful test.
+                    disabled={!r.data.enabled && r.data.status !== "Connected"}
+                    title={!r.data.enabled && r.data.status !== "Connected" ? "Test the connection first" : undefined}
                     onCheckedChange={async (enabled) => {
                       try {
-                        await ws.save("mcp", { ...r.data, enabled }, r.id);
+                        await ws.save("mcp", { title: r.data.title, url: r.data.url, enabled }, r.id);
                       } catch {}
                     }}
                   />
@@ -1764,6 +2791,27 @@ export function Settings({ ws, setView }: Props) {
                     >
                       Permissions
                     </button>
+                    <button
+                      className="secondary-button danger-button"
+                      disabled={busy === r.id}
+                      onClick={async () => {
+                        if (removingServer !== r.id) {
+                          setRemovingServer(r.id);
+                          return;
+                        }
+                        setBusy(r.id);
+                        try {
+                          await ws.remove(r.id);
+                          toast.success(`${r.data.title} removed`);
+                        } catch {
+                        } finally {
+                          setBusy("");
+                          setRemovingServer("");
+                        }
+                      }}
+                    >
+                      {removingServer === r.id ? "Confirm remove" : "Remove"}
+                    </button>
                   </div>
                 </div>
                 <p className="muted-note">
@@ -1788,9 +2836,9 @@ export function Settings({ ws, setView }: Props) {
             />
           )}
           <div className="notice">
-            <Lock size={17} /> Custom servers support discovery only. The Notion
-            connection runs read-only search and fetch tools; nothing is written
-            back to Notion.
+            <Lock size={17} /> Ask can call the read-only tools you enable on a
+            connected server (Agent skills → Custom MCP tools). Write tools are
+            never called automatically. Nothing is written back to Notion.
           </div>
         </TabsContent>
         <TabsContent value="Preferences">
@@ -1807,11 +2855,6 @@ export function Settings({ ws, setView }: Props) {
                 "Show proactive insights",
                 "Surface the sample intelligence feed on your home screen.",
               ],
-              [
-                "compact",
-                "Compact evidence cards",
-                "Use a denser layout when reviewing document sources.",
-              ],
             ].map(([key, label, description]) => (
               <div className="setting-row" key={key}>
                 <div>
@@ -1820,14 +2863,11 @@ export function Settings({ ws, setView }: Props) {
                 </div>
                 <Switch
                   aria-label={label}
-                  checked={settings?.data[key] ?? key !== "compact"}
+                  checked={settings?.data[key] ?? true}
                   onCheckedChange={async (value) => {
                     try {
-                      await ws.save(
-                        "settings",
-                        { ...settings?.data, [key]: value },
-                        settings?.id,
-                      );
+                      // Partial patch: the server merges it into the one settings record.
+                      await ws.save("settings", { [key]: value, __merge: true });
                       toast.success("Preference saved");
                     } catch {}
                   }}
@@ -1919,14 +2959,14 @@ export function Settings({ ws, setView }: Props) {
           <div className="panel">
             <h3>Implementation boundaries</h3>
             <p>
-              Search is lexical, with optional AI synthesis through your
-              gateway. Relationships, conflicts and proactive insights use a
-              curated sample corpus. Claim checking finds text overlap; it does
-              not independently establish truth. Office files are extracted as
-              text; spreadsheet calculations, image OCR, enterprise ACL sync,
-              automatic knowledge-graph construction, scheduled insight
-              generation and autonomous multi-agent execution are not
-              implemented.
+              Search is lexical, with AI synthesis and tool use through your
+              gateway: web search, page reading, CSV analysis, charts, Word
+              export, image reading, scheduled jobs and read-only MCP tools.
+              Relationships, conflicts and proactive insights use a curated
+              sample corpus. Claim checking finds text overlap; it does not
+              independently establish truth. Scheduled jobs run while the app is
+              open. Enterprise ACL sync, automatic knowledge-graph construction
+              and autonomous write actions are not implemented.
             </p>
           </div>
         </TabsContent>
@@ -2045,7 +3085,17 @@ export function Settings({ ws, setView }: Props) {
             className="primary-button"
             onClick={async () => {
               try {
-                await ws.save("mcp", selected.data, selected.id);
+                // Only the per-tool switches are editable; the server keeps its discovery.
+                await ws.save(
+                  "mcp",
+                  {
+                    title: selected.data.title,
+                    url: selected.data.url,
+                    enabled: selected.data.enabled,
+                    tools: (selected.data.tools ?? []).map((t: any) => ({ name: t.name, enabled: !!t.enabled })),
+                  },
+                  selected.id,
+                );
                 setSelected(null);
                 toast.success("Tool permissions saved");
               } catch {}

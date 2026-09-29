@@ -19,7 +19,15 @@ export async function POST(request: Request) {
       await saveRecord(user.userId, "mcp", {
         ...config, status: "Connected", lastTest: new Date().toISOString(), lastError: null,
         protocolVersion: result.protocolVersion, serverInfo: result.serverInfo, capabilities: result.capabilities,
-        ...(operation === "discover" ? { tools: result.tools } : {}),
+        // Rediscovery keeps the user's per-tool choices, matched by name.
+        ...(operation === "discover"
+          ? {
+              tools: result.tools.map((t) => ({
+                ...t,
+                enabled: Array.isArray(config.tools) && config.tools.some((p: any) => p?.name === t.name && p.enabled === true),
+              })),
+            }
+          : {}),
       }, id);
       await log(user.userId, "MCP connection tested", config.title);
       return Response.json({ status: "Connected", ...result });

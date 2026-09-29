@@ -41,7 +41,7 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
     };
   }
 
-  if (process.env.NODE_ENV === "production") return null;
+  if (!localSessionAllowed()) return null;
   const session = (await cookies()).get(LOCAL_SESSION_COOKIE)?.value;
   if (session !== LOCAL_SESSION_USER) return null;
   return {
@@ -50,6 +50,16 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
     email: "seedy@local.test",
     fullName: "Local Seedy",
   };
+}
+
+/**
+ * The cookie-only local session exists for the Vite dev server. It needs an
+ * explicit opt-in (Vite dev mode or SITES_DEV_AUTH=1) and never runs in production.
+ */
+function localSessionAllowed() {
+  if (process.env.NODE_ENV === "production") return false;
+  const dev = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true;
+  return dev || process.env.SITES_DEV_AUTH === "1";
 }
 
 export async function requireChatGPTUser(

@@ -233,6 +233,7 @@ export function Intelligence({ ws, ask, openSource, setView }: Props) {
   const [clientTab, setClientTab] = useState(clients[0].name);
   const [compare, setCompare] = useState(false);
   const [showDismissed, setShowDismissed] = useState(false);
+  const [dismissing, setDismissing] = useState("");
   const byId = (id: string) => all.find((s) => s.id === id);
   const today = new Date().toLocaleDateString("en-GB", {
     day: "numeric",
@@ -240,9 +241,14 @@ export function Intelligence({ ws, ask, openSource, setView }: Props) {
     year: "numeric",
   });
 
-  const dismissed = ws.state.records
-    .filter((r) => r.kind === "dismissed")
-    .map((r) => r.data.insightId as string);
+  // Unique insight ids, so an accidental double dismissal still counts once.
+  const dismissed = [
+    ...new Set(
+      ws.state.records
+        .filter((r) => r.kind === "dismissed")
+        .map((r) => r.data.insightId as string),
+    ),
+  ];
   const custom: Record<string, any>[] = ws.state.records
     .filter((r) => r.kind === "action")
     .map((r) => ({ ...r.data, id: r.data.id ?? r.id }));
@@ -631,15 +637,45 @@ export function Intelligence({ ws, ask, openSource, setView }: Props) {
                     {i.action}
                     <ArrowRight size={14} />
                   </button>
-                  {!dismissed.includes(i.id) && (
+                  {dismissed.includes(i.id) ? (
                     <button
                       type="button"
                       className="quiet-button"
+                      disabled={dismissing === i.id}
                       onClick={async () => {
+                        const recs = ws.state.records.filter(
+                          (r) => r.kind === "dismissed" && r.data.insightId === i.id,
+                        );
+                        setDismissing(i.id);
+                        try {
+                          for (const r of recs) await ws.remove(r.id);
+                          toast.success("Insight restored");
+                        } catch {
+                        } finally {
+                          setDismissing("");
+                        }
+                      }}
+                    >
+                      Restore
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="quiet-button"
+                      disabled={dismissing === i.id}
+                      onClick={async () => {
+                        if (!ws.state.user) {
+                          toast.error("Sign in to dismiss insights.");
+                          return;
+                        }
+                        setDismissing(i.id);
                         try {
                           await ws.save("dismissed", { insightId: i.id, title: i.title });
                           toast.success("Insight dismissed");
-                        } catch {}
+                        } catch {
+                        } finally {
+                          setDismissing("");
+                        }
                       }}
                     >
                       Dismiss

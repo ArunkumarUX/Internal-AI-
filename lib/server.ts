@@ -4,6 +4,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status = 400,
+    public code?: string,
   ) {
     super(message);
   }
@@ -19,6 +20,7 @@ export async function identity(request?: Request) {
     throw new ApiError(
       "Sign in to save and work with your organisation’s data.",
       401,
+      "auth",
     );
   return user;
 }
@@ -54,6 +56,7 @@ export function failure(e: unknown) {
         e instanceof ApiError
           ? e.message
           : "The workspace could not complete this request. Your input has been kept; please try again.",
+      ...(e instanceof ApiError && e.code ? { code: e.code } : {}),
     },
     { status: e instanceof ApiError ? e.status : 503 },
   );
@@ -65,11 +68,24 @@ export async function saveRecord(
   id = crypto.randomUUID(),
 ) {
   const now = new Date().toISOString();
-  await database()
+  const result = await database()
     .prepare(
       "INSERT INTO records (id,user_id,kind,data,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at WHERE records.user_id=excluded.user_id AND records.kind=excluded.kind",
     )
     .bind(id, userId, kind, JSON.stringify(data), now, now)
     .run();
+  // The upsert is skipped when the id belongs to another user or kind.
+  if (!result.meta.changes) throw new ApiError("Record not found.", 404);
   return id;
+}
+
+/** Per-user deterministic record id, so shared seed ids can't collide across users. */
+export async function userHash(userId: string, key: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(userId + ":" + key),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }

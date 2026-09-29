@@ -1,0 +1,73 @@
+/* Assistant features: overrides and additions on top of globals.css */
+
+/* Magic features: dots with a 24px hit area */
+.magic-dots { gap: 0; }
+.magic-dots button {
+  position: relative; width: 24px; height: 24px; padding: 0;
+  border-radius: 50%; background: transparent;
+}
+.magic-dots button::before {
+  content: ""; position: absolute; inset: 8px; border-radius: 50%; background: #d3d9e4;
+  transition: background 0.15s ease;
+}
+.magic-dots button[aria-current="true"] { background: transparent; }
+.magic-dots button[aria-current="true"]::before { background: var(--kit-ink); }
+.magic-dots button:hover::before { background: var(--kit-muted); }
+
+/* Recording pill (page top bar) */
+.rec-pill {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  border: 1px solid #f3c7c9; border-radius: 999px; background: #fdecec; color: #b4232a;
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.rec-pill.paused { border-color: var(--kit-border); background: #fff; color: var(--kit-muted); }
+.rec-pill button { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border-radius: 999px; }
+.rec-pill-open:hover { background: #fbdcdc; }
+.rec-pill.paused .rec-pill-open:hover { background: var(--kit-indigo-wash); }
+.rec-pill-open i { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; animation: mf-pulse 1.3s ease-in-out infinite; }
+.rec-pill.paused .rec-pill-open i { background: var(--kit-muted); animation: none; }
+.rec-pill-open time { font-weight: 500; }
+.rec-pill-stop { color: inherit; border-left: 1px solid currentColor; border-radius: 0 999px 999px 0 !important; }
+.rec-pill-stop:hover { background: #fbdcdc; }
+.rec-pill.paused .rec-pill-stop { border-left-color: var(--kit-border); }
+
+/* Meeting: restore draft and inline confirm */
+.meeting-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; padding: 10px 12px;
+  border: 1px solid var(--kit-border); border-radius: 12px; background: var(--kit-indigo-wash);
+  font-size: 13.5px; color: var(--kit-ink);
+}
+.meeting-bar > span { flex: 1 1 200px; }
+.meeting-bar.warn { border-color: #f1d49a; background: #fff8e8; }
+.meeting-bar .secondary-button, .meeting-bar .quiet-button { min-height: 32px; padding: 5px 12px; font-size: 13px; }
+
+/* Scheduled jobs */
+.jobs-paused { margin-bottom: 12px; }
+.job-count { margin: 0 0 8px; font-size: 12.5px; color: var(--kit-muted); }
+.job-edit { display: grid; gap: 10px; }
+.job-edit-title { font-size: 14px; font-weight: 600; color: var(--kit-ink); }
+.job-more { margin-top: 6px; }
+.job .quiet-button svg { margin-right: 2px; vertical-align: -1px; }
+.field-error { display: block; margin-top: 4px; font-size: 12px; font-weight: 500; color: #c93b40; }
+.job-form [aria-invalid="true"] { border-color: #e5484d; }
+
+/* Agent skills */
+.skill-hint { margin: -4px 0 12px; }
+.skill-detail h2:focus { outline: none; }
+.skill-detail h2:focus-visible { outline: 2px solid var(--kit-indigo); outline-offset: 2px; border-radius: 4px; }
+
+/* Tab suggestion on touch devices */
+.suggestion-chip {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 32px; margin-top: 6px;
+  padding: 4px 12px; border: 1px solid var(--kit-border); border-radius: 999px; background: #fff;
+  font-size: 13px; color: var(--kit-ink);
+}
+.suggestion-chip em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; color: var(--kit-muted); }
+.suggestion-chip span { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--kit-indigo); }
+.suggestion-chip:active { background: var(--kit-indigo-soft); }
+
+/* Beacon "/" hint */
+.beacon-slash {
+  flex-shrink: 0; padding: 0 6px; border: 1px solid var(--mf-night-line); border-radius: 5px;
+  font-size: 11px; line-height: 18px; color: #9ba3bb; background: transparent;
+}

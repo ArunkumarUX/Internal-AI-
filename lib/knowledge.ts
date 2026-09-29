@@ -12,6 +12,9 @@ export type Source = {
   version?: string;
   url?: string;
   sample?: boolean;
+  mime?: string;
+  /** Only a preview of the text is loaded; fetch the rest on demand. */
+  truncated?: boolean;
 };
 export const sources: Source[] = [
   {
@@ -190,55 +193,199 @@ export const sources: Source[] = [
 ];
 export const people = [
   {
-    id: "maya",
-    name: "Maya Patel",
-    role: "Principal AI Architect",
-    location: "London",
-    initials: "MP",
-    color: "lilac",
-    skills: ["Banking", "GenAI", "Retrieval", "Azure"],
-    evidence: ["expertise", "atlas-decision", "banking-cases"],
-    description:
-      "Designed permission-aware retrieval for Meridian and Project Atlas.",
-  },
-  {
-    id: "daniel",
-    name: "Daniel Okafor",
-    role: "AI Evaluation Lead",
-    location: "Manchester",
-    initials: "DO",
+    id: "ahmad",
+    name: "Ahmad Al Matrooshi",
+    role: "Partner",
+    location: "Dubai, UAE",
+    initials: "AA",
     color: "sky",
-    skills: ["Evaluation", "Banking", "Risk", "Python"],
-    evidence: ["expertise", "banking-cases"],
-    description:
-      "Turns answer quality and retrieval performance into measurable evidence.",
+    photo: "/people/ahmad.jpg",
+    badge: "Invite sent",
+    focus: "Client relationships · Gulf partnerships",
+    skills: ["Partnerships", "Clients", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Owns senior client relationships across the UAE"],
+    description: "Partner based in Dubai, focused on senior client relationships.",
   },
   {
-    id: "sofia",
-    name: "Sofia Rossi",
-    role: "Product Strategy Director",
-    location: "London",
-    initials: "SR",
-    color: "peach",
-    skills: ["Discovery", "Adoption", "Responsible AI", "Research"],
-    evidence: ["expertise", "harbour-brief"],
-    description: "Connects user needs, responsible AI and practical adoption.",
+    id: "aisha",
+    name: "Aisha Al Shareef",
+    role: "Partner",
+    location: "Dubai, UAE",
+    initials: "AS",
+    color: "lilac",
+    photo: "/people/aisha.jpg",
+    badge: "Invite sent",
+    focus: "Client leadership · Regional growth",
+    skills: ["Leadership", "Clients", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Partners with leadership teams across the region"],
+    description: "Partner based in Dubai, working with leadership teams across the region.",
   },
   {
-    id: "james",
-    name: "James Wilson",
-    role: "Delivery Lead",
-    location: "Bristol",
-    initials: "JW",
+    id: "chezar",
+    name: "Chezar Ameer",
+    role: "Partner",
+    location: "Dubai, UAE",
+    initials: "CA",
     color: "mint",
-    skills: ["Delivery", "Governance", "Planning", "Banking"],
-    evidence: ["expertise", "atlas-status", "meeting-notes"],
-    description: "Leads Project Atlas delivery and cross-team commitments.",
+    photo: "/people/chezar.jpg",
+    badge: "Invite sent",
+    focus: "Delivery · Client programmes",
+    skills: ["Delivery", "Programmes", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Leads client programmes from the Dubai office"],
+    description: "Partner based in Dubai, leading client programmes.",
+  },
+  {
+    id: "deepak",
+    name: "Deepak Selvaraj",
+    role: "Director — Technology, Data, and AI",
+    location: "Dubai, UAE",
+    initials: "DS",
+    color: "sky",
+    photo: "",
+    badge: "Active",
+    focus: "Technology · Data · AI",
+    skills: ["Technology", "Data", "AI"],
+    evidence: ["expertise", "atlas-decision", "banking-cases"],
+    highlights: ["Leads technology, data and AI for the firm"],
+    description: "Director for Technology, Data and AI, based in Dubai.",
+  },
+  {
+    id: "mark",
+    name: "Mark Xu",
+    role: "Partner — Technology and Data",
+    location: "Shanghai, China",
+    initials: "MX",
+    color: "neutral",
+    photo: "",
+    badge: "Invite sent",
+    focus: "Technology · Data · China market",
+    skills: ["Technology", "Data", "China"],
+    evidence: ["expertise"],
+    highlights: ["Partners on technology and data from Shanghai"],
+    description: "Partner for Technology and Data, based in Shanghai.",
+  },
+  {
+    id: "nizar",
+    name: "Nizar Fraij",
+    role: "Senior Manager — Transformation",
+    location: "Dubai, UAE",
+    initials: "NF",
+    color: "peach",
+    photo: "/people/nizar.png",
+    badge: "Invite sent",
+    focus: "Transformation · Delivery",
+    skills: ["Transformation", "Delivery", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Runs transformation programmes from Dubai"],
+    description: "Senior Manager for Transformation, based in Dubai.",
+  },
+  {
+    id: "oussama",
+    name: "Oussama Idriss",
+    role: "Director — Transformation",
+    location: "Dubai, UAE",
+    initials: "OI",
+    color: "sky",
+    photo: "/people/oussama.jpg",
+    badge: "Active",
+    focus: "Transformation · Operating model",
+    skills: ["Transformation", "Operating model", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Directs transformation work across the region"],
+    description: "Director for Transformation, based in Dubai.",
+  },
+  {
+    id: "saranya",
+    name: "Saranya Seetharaman",
+    role: "COO",
+    location: "Dubai, UAE",
+    initials: "SS",
+    color: "lilac",
+    photo: "",
+    badge: "Invite sent",
+    focus: "Operations · Firm running",
+    skills: ["Operations", "Leadership", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Runs day-to-day operations for the firm"],
+    description: "Chief Operating Officer, based in Dubai.",
+  },
+  {
+    id: "sreedhar",
+    name: "Sreedhar Kumar",
+    role: "Manager — Transformation",
+    location: "Dubai, UAE",
+    initials: "SK",
+    color: "mint",
+    photo: "/people/sreedhar.jpg",
+    badge: "Invite sent",
+    focus: "Transformation · Delivery support",
+    skills: ["Transformation", "Delivery", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Supports transformation delivery from Dubai"],
+    description: "Manager for Transformation, based in Dubai.",
+  },
+  {
+    id: "tarun",
+    name: "Tarun Yarlagadda",
+    role: "Product Analyst",
+    location: "London, UK",
+    initials: "TY",
+    color: "peach",
+    photo: "",
+    badge: "Active",
+    focus: "Product · Analysis",
+    skills: ["Product", "Analysis", "UK"],
+    evidence: ["expertise"],
+    highlights: ["Analyses product work from the London office"],
+    description: "Product Analyst, based in London.",
+  },
+  {
+    id: "walid",
+    name: "Walid Hizaoui",
+    role: "Managing Partner",
+    location: "Dubai, UAE",
+    initials: "WH",
+    color: "sky",
+    photo: "/people/walid.jpg",
+    badge: "Active",
+    focus: "Firm leadership · Clients",
+    skills: ["Leadership", "Clients", "UAE"],
+    evidence: ["expertise"],
+    highlights: ["Managing Partner for the Dubai practice"],
+    description: "Managing Partner, based in Dubai.",
   },
 ];
-export const clients = [
+export const CLIENT_STAGES = [
+  "Prospect",
+  "Discovery",
+  "Pilot",
+  "Active",
+  "On hold",
+] as const;
+export type ClientStage = (typeof CLIENT_STAGES)[number];
+export type Client = {
+  id?: string;
+  stage: ClientStage;
+  stageRecordId?: string;
+  name: string;
+  initials: string;
+  industry: string;
+  owner: string;
+  color: string;
+  description: string;
+  tags: string[];
+  documents: string[];
+  opportunity: string;
+  risk: string;
+  custom?: boolean;
+};
+export const clients: Client[] = [
   {
     name: "Northstar Bank",
+    stage: "Pilot",
     initials: "NB",
     industry: "Financial services",
     owner: "Sarah Chen",
@@ -258,6 +405,7 @@ export const clients = [
   },
   {
     name: "Harbour Insurance",
+    stage: "Discovery",
     initials: "HI",
     industry: "Insurance",
     owner: "Sofia Rossi",
@@ -425,6 +573,32 @@ export const phases = [
     ],
   },
 ];
+/**
+ * How well the retrieved documents cover the question: the share of
+ * meaningful query terms found in them and the best single-document score.
+ */
+export function evidenceStrength(query: string, docs: Source[]) {
+  const terms = queryTerms(query);
+  const text = docs.map((d) => `${d.title} ${d.tags.join(" ")} ${d.client} ${d.content}`.toLowerCase()).join(" ");
+  const matched = terms.filter((t) => text.includes(t));
+  const topScore = Math.max(
+    0,
+    ...docs.map((d) =>
+      terms.reduce(
+        (n, t) =>
+          n +
+          ((d.title + " " + d.tags.join(" ") + " " + d.client).toLowerCase().includes(t) ? 4 : 0) +
+          (d.content.toLowerCase().includes(t) ? 1 : 0),
+        0,
+      ),
+    ),
+  );
+  return { terms: terms.length, matched: matched.length, coverage: terms.length ? matched.length / terms.length : 1, topScore };
+}
+const STOP_WORDS = ["the", "our", "and", "for", "what", "with", "from", "that", "this", "can", "help", "about", "please", "prepare", "are", "how", "who", "why", "when", "does", "tell", "give", "show", "latest", "current", "any", "there", "have", "has", "was", "were", "will", "would", "should", "could", "into", "your", "you", "its"];
+function queryTerms(query: string) {
+  return [...new Set(query.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])].filter((x) => !STOP_WORDS.includes(x));
+}
 export function searchSources(
   query: string,
   docs: Source[],

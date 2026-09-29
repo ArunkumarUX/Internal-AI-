@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { clients } from "@/lib/knowledge";
+import { clients as sampleClients } from "@/lib/knowledge";
 
 export const FIRM_WIDE = "All clients";
 export const DOCUMENT_CATEGORIES = [
@@ -63,7 +63,12 @@ function send(form: FormData, onSent: () => void) {
     xhr.onload = () => {
       const body = xhr.response ?? {};
       if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-      else reject(new Error(body.error ?? "The document could not be uploaded."));
+      else
+        reject(
+          Object.assign(new Error(body.error ?? "The document could not be uploaded."), {
+            status: xhr.status,
+          }),
+        );
     };
     xhr.onerror = () =>
       reject(new Error("The upload was interrupted. Check your connection and try again."));
@@ -100,6 +105,7 @@ export function UploadSheet({
   open,
   signedIn,
   defaultClient,
+  clientNames = sampleClients.map((c) => c.name),
   onClose,
   onUploaded,
   onDiscuss,
@@ -107,6 +113,7 @@ export function UploadSheet({
   open: boolean;
   signedIn: boolean;
   defaultClient?: string;
+  clientNames?: string[];
   onClose: () => void;
   onUploaded: () => Promise<void> | void;
   onDiscuss: (doc: UploadedDocument, mode: "summarise" | "ask") => void;
@@ -119,6 +126,7 @@ export function UploadSheet({
   const [docDate, setDocDate] = useState(today);
   const [phase, setPhase] = useState<Phase>(null);
   const [error, setError] = useState("");
+  const [expired, setExpired] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [result, setResult] = useState<UploadedDocument | null>(null);
 
@@ -139,17 +147,38 @@ export function UploadSheet({
   const step: 1 | 2 | 3 | 4 =
     phase === "ready" ? 4 : phase ? 3 : file ? 2 : 1;
 
+  const TYPES = ["txt", "md", "csv", "pdf", "docx", "pptx", "xlsx", "png", "jpg", "jpeg", "webp"];
   function choose(list: FileList | null) {
     const picked = list?.[0];
     if (!picked) return;
-    setFile(picked);
-    setTitle(titleFromFile(picked.name));
-    setError("");
     if (fileRef.current) fileRef.current.value = "";
+    // Check before uploading anything; a drop bypasses the picker's type filter.
+    const ext = picked.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!TYPES.includes(ext)) {
+      setError("That file type isn’t supported. Use PDF, Word, PowerPoint, Excel, CSV, text, Markdown, PNG, JPG or WebP.");
+      return;
+    }
+    if (picked.size === 0) {
+      setError("That file is empty. Choose another.");
+      return;
+    }
+    if (picked.size > 10 * 1024 * 1024) {
+      setError(`That file is ${formatSize(picked.size)}. Choose one smaller than 10 MB.`);
+      return;
+    }
+    // Keep a title the user already typed when they swap the file.
+    const previousAuto = file ? titleFromFile(file.name) : "";
+    setFile(picked);
+    if (!title.trim() || title === previousAuto) setTitle(titleFromFile(picked.name));
+    setError(list && list.length > 1 ? `Only the first file (${picked.name}) was added. Upload the others one at a time.` : "");
   }
 
   async function submit() {
     if (!file || !complete || busy) return;
+    if (docDate > today()) {
+      setError("The document date can’t be in the future.");
+      return;
+    }
     setError("");
     setPhase("uploading");
     const form = new FormData();
@@ -166,12 +195,19 @@ export function UploadSheet({
         title: body.title,
         client: body.client,
         category: body.category,
-        notice: body.notice,
+        notice: body.duplicateOf
+          ? `${body.notice} This file matches “${body.duplicateOf.title}”, which is already in Knowledge.`
+          : body.notice,
       });
       setPhase("ready");
     } catch (e) {
       setPhase(null);
-      setError((e as Error).message);
+      setExpired((e as { status?: number }).status === 401);
+      setError(
+        (e as { status?: number }).status === 401
+          ? "Your session has ended. Sign in again; your details stay filled in."
+          : (e as Error).message,
+      );
     }
   }
 
@@ -313,9 +349,9 @@ export function UploadSheet({
                 <span>Client *</span>
                 <select value={client} onChange={(e) => setClient(e.target.value)}>
                   <option value="">Select client…</option>
-                  {clients.map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.name}
+                  {clientNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
                     </option>
                   ))}
                   <option value={FIRM_WIDE}>All clients (firm-wide)</option>
@@ -353,6 +389,14 @@ export function UploadSheet({
           {error && (
             <p className="upload-error" role="alert">
               {error}
+              {expired && (
+                <>
+                  {" "}
+                  <a href="/signin-with-chatgpt?return_to=%2F%23knowledge" target="_blank" rel="noreferrer">
+                    Sign in (opens a new tab)
+                  </a>
+                </>
+              )}
             </p>
           )}
         </div>

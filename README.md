@@ -29,6 +29,10 @@ D1 stores per-user records, document text and append-only activity entries. R2 s
 
 Apply a migration only once to an existing local database. Runtime never creates tables. Hosted migrations are included in the deployment artifact.
 
+Later migrations (`0001`–`0003`) are applied the same way with their file names. `0003_document_hash.sql` adds upload fingerprints for duplicate warnings; uploads still work without it.
+
+The cookie-only local sign-in runs only under the Vite dev server (or with `SITES_DEV_AUTH=1` outside production), and the local mock strips any `oai-*` identity headers sent by the browser. Set `APP_ORIGIN` when the public origin differs from the request origin (used for the Notion OAuth redirect).
+
 ## Live AI configuration
 
 Configure server-side runtime values:
@@ -38,6 +42,25 @@ Configure server-side runtime values:
 - `AI_MODEL`: an approved gateway model identifier.
 
 No model is selected or charged until configured. Without these values, Ask returns labelled evidence extracts and structured draft templates. With them, the server sends accessible retrieved excerpts, the question, and a limited recent conversation to the approved gateway. Tool execution is never performed by the model.
+
+## Agent backend
+
+Stack: Cloudflare Workers (API routes), D1 (records, documents, jobs, capability cache), R2 (originals, generated files) and the OpenAI-compatible AI gateway. Skills are stored in the user's settings record and enforced on the server in `lib/engine.ts`; the browser never decides what runs.
+
+| Skill | Implementation |
+|---|---|
+| RAG & memory | Lexical retrieval over sample, uploaded, Notion and approved-memory sources; history only when on |
+| Documents | Attachments passed as evidence; images read by the vision model at upload |
+| Web search | `web_search` tool → gateway search (`enable_search`, DashScope) |
+| Read websites | Links in the question are read up front; `read_url` tool for others. Public http(s) only, private hosts blocked, redirects re-checked, 2 MB cap |
+| Data analysis | `analyze_data` tool: structured filter/group/aggregate/sort over uploaded CSVs (`lib/data.ts`). Numeric questions about a retrieved CSV force the tool |
+| Charts | Model emits ```` ```chart ```` JSON; rendered with Recharts |
+| Document creation | `POST /api/export` builds a .docx (`lib/docx.ts`) and saves it to uploads |
+| Images | `generate_image` tool (DashScope multimodal generation) — offered only when the key allows image models |
+| Scheduled jobs | `POST /api/jobs` (create/update/delete/run/run-due). Due jobs run while the app is open (checked every 5 minutes, claimed atomically) |
+| MCP tools | Enabled read-only tools on connected servers become agent tools; write tools are never offered |
+
+`GET /api/capabilities` probes what the gateway key may use (vision, web search, image generation) with zero-cost invalid requests and caches the result for 12 hours per user.
 
 ## MCP
 
@@ -51,7 +74,7 @@ Run `node --experimental-strip-types --test tests/mcp.mjs` for transport compati
 
 ## Documents
 
-TXT, Markdown and CSV are decoded as text. PDF text uses unpdf. DOCX, PPTX and XLSX extract selected XML text with fflate. Originals up to 10 MB are stored privately. Extracted text is capped at 300,000 characters; Office expansion is bounded at 30 MB. Images are stored but have no OCR/vision processing. Spreadsheet XML extraction is not formula evaluation or a faithful table model. Scanned or encrypted PDFs may have no text or fail extraction. The UI reports unavailable text rather than claiming successful analysis.
+TXT, Markdown and CSV are decoded as text. PDF text uses unpdf. DOCX, PPTX and XLSX extract selected XML text with fflate. Originals up to 10 MB are stored privately. Extracted text is capped at 300,000 characters; Office expansion is bounded at 30 MB. Images (PNG, JPG, WebP up to 7 MB) are read by the gateway's vision model when it supports images: their text and a short description become searchable content. Spreadsheet XML extraction is not formula evaluation or a faithful table model. Scanned or encrypted PDFs may have no text or fail extraction. The UI reports unavailable text rather than claiming successful analysis.
 
 ## Validation
 

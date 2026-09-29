@@ -39,6 +39,14 @@ export function sites({ mockAuth = false } = {}) {
           return;
         }
 
+        // Identity headers only ever come from this mock, never the client.
+        for (const name of Object.keys(req.headers)) {
+          if (name.toLowerCase().startsWith("oai-")) delete req.headers[name];
+        }
+        for (let i = (req.rawHeaders?.length ?? 0) - 2; i >= 0; i -= 2) {
+          if (String(req.rawHeaders[i]).toLowerCase().startsWith("oai-")) req.rawHeaders.splice(i, 2);
+        }
+
         const cookie = String(req.headers.cookie || "");
         if (cookie.split(";").some((part) => part.trim() === `${COOKIE}=${USER_ID}`)) {
           req.headers["oai-authenticated-user-id"] = USER_ID;

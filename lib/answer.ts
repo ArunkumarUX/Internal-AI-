@@ -1,4 +1,4 @@
-import { sources, searchSources, type Source } from "./knowledge";
+import { searchSources, type Source } from "./knowledge";
 export type Answer = {
   text: string;
   sourceIds: string[];
@@ -6,6 +6,17 @@ export type Answer = {
   title: string;
   followups: string[];
 };
+const DEFAULT_FOLLOWUPS = [
+  "Prepare me for the Northstar Bank meeting",
+  "Who has banking AI expertise?",
+  "What does the Northstar RFP require?",
+];
+function isChat(query: string) {
+  const q = query.trim().toLowerCase();
+  return /^(hi|hello|hey|howdy|yo|sup|thanks|thank you|good (morning|afternoon|evening))[\s!.]*$/.test(
+    q,
+  ) || /^(what can you do|who are you|help|how does this work)\??$/.test(q);
+}
 export function localAnswer(
   query: string,
   docs: Source[],
@@ -28,11 +39,14 @@ export function localAnswer(
   let refs = matches;
   let text = "";
   let title = query.slice(0, 80);
+  let followups = DEFAULT_FOLLOWUPS;
   const excerpt = (d: Source) => `### ${d.title}\n${d.content}\n[${d.id}]`;
-  const sample = docs.every((d) => d.sample);
-  if (
-    /meeting|prepare me|executive brief/.test(q) &&
-    /northstar|bank/.test(q)
+  if (isChat(query)) {
+    text = `## Hello\n\nI can search this workspace and help you prepare work from it — meeting briefs, proposals, people, pricing and claim checks.\n\nAsk about **Northstar Bank**, **Harbour Insurance**, **Project Atlas**, or someone in People. You can also upload a document.\n\nI answer from sources here. I will not invent organisational facts.`;
+    title = "How I can help";
+    refs = [];
+  } else if (
+    /meeting brief|prepare a meeting|prepare me|executive brief/.test(q)
   ) {
     refs = selected([
       "northstar-brief",
@@ -71,10 +85,6 @@ export function localAnswer(
     sourceIds: refs.map((d) => d.id),
     mode: "Evidence extracts · AI gateway not connected",
     title,
-    followups: [
-      "Find the supporting evidence",
-      "Identify risks and knowledge gaps",
-      "Prepare a meeting brief",
-    ],
+    followups,
   };
 }

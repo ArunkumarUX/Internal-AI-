@@ -16,7 +16,16 @@ type Tokens = {
   clientId: string;
   connectedAt: string;
   workspace?: string;
+  /** Set when the refresh token stopped working; the user must reconnect. */
+  reauth?: boolean;
 };
+
+/** Notion is connected but its tokens no longer work. */
+export class NotionReauthError extends Error {
+  constructor() {
+    super("Notion needs reconnecting.");
+  }
+}
 
 const b64url = (bytes: Uint8Array) =>
   btoa(String.fromCharCode(...bytes))
@@ -64,8 +73,8 @@ async function clientFor(redirectUri: string) {
   return json.client_id;
 }
 
-export async function startNotionAuth(request: Request) {
-  const origin = new URL(request.url).origin;
+export async function startNotionAuth(request: Request, configuredOrigin?: string) {
+  const origin = configuredOrigin ?? new URL(request.url).origin;
   const redirectUri = `${origin}/api/notion/callback`;
   const clientId = await clientFor(redirectUri);
   const state = random(16);
@@ -145,34 +154,105 @@ export async function finishNotionAuth(userId: string, request: Request) {
   await writeConnection(userId, PROVIDER, tokens);
 }
 
-async function accessToken(userId: string) {
-  const tokens = await readConnection<Tokens>(userId, PROVIDER);
-  if (!tokens) return null;
-  if (tokens.expiresAt - Date.now() > 60_000) return tokens.accessToken;
-  if (!tokens.refreshToken) return null;
+async function markReauth(userId: string) {
+  // UPDATE only: a disconnect made meanwhile must not be undone.
+  await database()
+    .prepare(
+      "UPDATE connections SET data=json_set(data,'$.reauth',json('true')),updated_at=? WHERE user_id=? AND provider=?",
+    )
+    .bind(new Date().toISOString(), userId, PROVIDER)
+    .run();
+}
+
+async function refresh(userId: string, tokens: Tokens): Promise<string | null> {
+  if (!tokens.refreshToken) {
+    await markReauth(userId);
+    throw new NotionReauthError();
+  }
   const refreshed = await tokenRequest({
     grant_type: "refresh_token",
     refresh_token: tokens.refreshToken,
     client_id: tokens.clientId,
   });
-  if (!refreshed) return null;
-  await writeConnection(userId, PROVIDER, {
+  if (!refreshed) {
+    await markReauth(userId);
+    throw new NotionReauthError();
+  }
+  const next: Tokens = {
     ...tokens,
-    accessToken: refreshed.access_token,
+    accessToken: refreshed.access_token!,
     refreshToken: refreshed.refresh_token ?? tokens.refreshToken,
     expiresAt: Date.now() + (refreshed.expires_in ?? 3600) * 1000,
-  });
-  return refreshed.access_token!;
+  };
+  // Conditional on the row still holding the token we refreshed, so a
+  // disconnect or a newer connection made meanwhile wins.
+  const updated = await database()
+    .prepare(
+      "UPDATE connections SET data=?,updated_at=? WHERE user_id=? AND provider=? AND json_extract(data,'$.refreshToken')=?",
+    )
+    .bind(JSON.stringify(next), new Date().toISOString(), userId, PROVIDER, tokens.refreshToken)
+    .run();
+  if (updated.meta.changes) return next.accessToken;
+  const current = await readConnection<Tokens>(userId, PROVIDER);
+  return current && !current.reauth && current.expiresAt - Date.now() > 60_000 ? current.accessToken : null;
+}
+
+/** One refresh per user at a time within this isolate. */
+const refreshing = new Map<string, Promise<string | null>>();
+
+async function accessToken(userId: string) {
+  const tokens = await readConnection<Tokens>(userId, PROVIDER);
+  if (!tokens) return null;
+  if (tokens.reauth) throw new NotionReauthError();
+  if (tokens.expiresAt - Date.now() > 60_000) return tokens.accessToken;
+  let pending = refreshing.get(userId);
+  if (!pending) {
+    pending = refresh(userId, tokens).finally(() => refreshing.delete(userId));
+    refreshing.set(userId, pending);
+  }
+  return pending;
 }
 
 export async function notionStatus(userId: string) {
   const tokens = await readConnection<Tokens>(userId, PROVIDER);
-  return tokens
-    ? { connected: true, connectedAt: tokens.connectedAt, server: NOTION_MCP_URL.href }
-    : { connected: false, server: NOTION_MCP_URL.href };
+  if (!tokens) return { connected: false, server: NOTION_MCP_URL.href };
+  if (tokens.reauth)
+    return { connected: false, reauth: true, connectedAt: tokens.connectedAt, server: NOTION_MCP_URL.href };
+  return { connected: true, connectedAt: tokens.connectedAt, server: NOTION_MCP_URL.href };
+}
+
+/** Revokes the token when the issuer advertises a revocation endpoint. */
+async function revoke(tokens: Tokens) {
+  try {
+    const meta = await fetch(`${ISSUER}/.well-known/oauth-authorization-server`, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(4000),
+    });
+    const json = (await meta.json().catch(() => ({}))) as { revocation_endpoint?: string };
+    const endpoint = json.revocation_endpoint;
+    if (!meta.ok || typeof endpoint !== "string" || new URL(endpoint).origin !== ISSUER) return;
+    for (const [token, hint] of [
+      [tokens.refreshToken, "refresh_token"],
+      [tokens.accessToken, "access_token"],
+    ] as const) {
+      if (!token) continue;
+      const r = await fetch(endpoint, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ token, token_type_hint: hint, client_id: tokens.clientId }).toString(),
+        signal: AbortSignal.timeout(4000),
+      });
+      await r.body?.cancel();
+    }
+  } catch {
+    // Revocation is best effort; the local tokens are deleted regardless.
+  }
 }
 
 export async function disconnectNotion(userId: string) {
+  const tokens = await readConnection<Tokens>(userId, PROVIDER).catch(() => null);
+  if (tokens) await revoke(tokens);
   await database()
     .prepare("DELETE FROM connections WHERE user_id=? AND provider=?")
     .bind(userId, PROVIDER)
@@ -208,9 +288,40 @@ function pageText(raw: string) {
   }
 }
 
+function pageTitle(raw: string, fallback: string) {
+  try {
+    const json = JSON.parse(raw);
+    if (typeof json.title === "string" && json.title.trim()) return json.title;
+  } catch {
+    /* plain text */
+  }
+  return (
+    raw.match(/<title>([^<]+)<\/title>/i)?.[1] ||
+    raw.match(/^#\s+(.+)$/m)?.[1] ||
+    fallback
+  );
+}
+
+function notionIdsIn(query: string) {
+  const compact = query.match(/[0-9a-f]{32}/gi) ?? [];
+  const dashed =
+    query.match(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+    ) ?? [];
+  const ids = [
+    ...dashed,
+    ...compact.map(
+      (id) =>
+        `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`,
+    ),
+  ];
+  return [...new Set(ids.map((id) => id.toLowerCase()))];
+}
+
 /**
  * Searches the user's connected Notion workspace through the hosted MCP server.
- * Returns null when Notion isn't connected; throws McpError when the server fails.
+ * Returns null when Notion isn't connected; throws NotionReauthError when the
+ * user must reconnect and McpError when the server fails.
  */
 export async function searchNotion(userId: string, query: string, limit = 4): Promise<Source[] | null> {
   const token = await accessToken(userId);
@@ -225,9 +336,54 @@ export async function searchNotion(userId: string, query: string, limit = 4): Pr
           if (!READ_TOOLS.has(name)) throw new McpError("Tool not approved.", 403);
           return call(name, args);
         };
-        const hits = parseHits(await safeCall("notion-search", { query, query_type: "internal" })).slice(0, limit);
+        const directIds = notionIdsIn(query);
+        const direct = (
+          await Promise.all(
+            directIds.map(async (id): Promise<Hit | null> => {
+              try {
+                const raw = await safeCall("notion-fetch", { id });
+                const text = pageText(raw);
+                if (!text.trim()) return null;
+                return {
+                  id,
+                  title: pageTitle(raw, "Notion page"),
+                  url: `https://www.notion.so/${id.replaceAll("-", "")}`,
+                  highlight: text,
+                };
+              } catch {
+                return null;
+              }
+            }),
+          )
+        ).filter((x): x is Hit => !!x);
+        const searchQuery = query
+          .replace(/https?:\/\/\S+/g, " ")
+          .replace(
+            /[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}/gi,
+            " ",
+          )
+          .replace(/\s+/g, " ")
+          .trim();
+        const searched = searchQuery
+          ? parseHits(
+              await safeCall("notion-search", {
+                query: searchQuery,
+                query_type: "internal",
+              }),
+            )
+          : [];
+        const hits = [
+          ...direct,
+          ...searched.filter((h) => !direct.some((d) => d.id === h.id)),
+        ].slice(0, Math.max(limit, direct.length));
         const pages = await Promise.all(
-          hits.map((h) => safeCall("notion-fetch", { id: h.id }).then(pageText).catch(() => h.highlight ?? "")),
+          hits.map((h) =>
+            h.highlight && directIds.includes(h.id.toLowerCase())
+              ? Promise.resolve(h.highlight)
+              : safeCall("notion-fetch", { id: h.id })
+                  .then(pageText)
+                  .catch(() => h.highlight ?? ""),
+          ),
         );
         hits.forEach((h, i) =>
           found.push({
@@ -249,8 +405,8 @@ export async function searchNotion(userId: string, query: string, limit = 4): Pr
     );
   } catch (error) {
     if (error instanceof McpError && error.status === 401) {
-      await disconnectNotion(userId);
-      return null;
+      await markReauth(userId);
+      throw new NotionReauthError();
     }
     throw error;
   }
