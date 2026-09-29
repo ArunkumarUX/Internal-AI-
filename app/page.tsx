@@ -99,6 +99,7 @@ import {
   Badge,
 } from "./workspaces";
 import { UploadSheet } from "./upload-sheet";
+import { LoginScreen, LoginSplash } from "./login-screen";
 import { Intelligence } from "./intelligence";
 import { ChatExchange, type ChatMessage } from "./chat";
 import {
@@ -879,6 +880,15 @@ export default function Home() {
       </div>
     </div>
   );
+  if (ws.auth === "loading") return <LoginSplash />;
+  if (ws.auth !== "signed-in") {
+    return (
+      <LoginScreen
+        expired={ws.auth === "expired"}
+        onSignedIn={() => void ws.refresh()}
+      />
+    );
+  }
   return (
     <SidebarProvider>
       <CloseMobileSidebar view={view} nonce={navNonce} />
@@ -1139,15 +1149,7 @@ export default function Home() {
             </button>
           </div>
         </header>
-        {ws.auth === "expired" && (
-          <div className="storage-error" role="alert">
-            Your session has ended. Sign in again to keep working — your current draft stays here.
-            <a href={`/signin-with-chatgpt?return_to=${encodeURIComponent(`/#${view.toLowerCase().replaceAll(" ", "-")}`)}`} target="_top">
-              Sign in again
-            </a>
-          </div>
-        )}
-        {ws.error && ws.auth !== "expired" && (
+        {ws.error && (
           <div className="storage-error" role="alert">
             {ws.error}
             <button onClick={() => void ws.refresh()}>Retry</button>

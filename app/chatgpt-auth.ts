@@ -1,5 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { EMAIL_COOKIE, SESSION_COOKIE, SESSION_USER } from "@/lib/auth-session";
 
 export type ChatGPTUser = {
   userId: string;
@@ -17,9 +18,6 @@ const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
 const SIGN_IN_PATH = "/signin-with-chatgpt";
 const SIGN_OUT_PATH = "/signout-with-chatgpt";
 const CALLBACK_PATH = "/callback";
-
-const LOCAL_SESSION_COOKIE = "sites_session";
-const LOCAL_SESSION_USER = "local_seedy";
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
@@ -42,13 +40,20 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   }
 
   if (!localSessionAllowed()) return null;
-  const session = (await cookies()).get(LOCAL_SESSION_COOKIE)?.value;
-  if (session !== LOCAL_SESSION_USER) return null;
+  const jar = await cookies();
+  const session = jar.get(SESSION_COOKIE)?.value;
+  if (session !== SESSION_USER) return null;
+  const sessionEmail = jar.get(EMAIL_COOKIE)?.value;
+  const signedEmail =
+    sessionEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sessionEmail)
+      ? sessionEmail
+      : "seedy@local.test";
+  const displayName = signedEmail === "seedy@local.test" ? "Local Seedy" : signedEmail;
   return {
-    userId: LOCAL_SESSION_USER,
-    displayName: "Local Seedy",
-    email: "seedy@local.test",
-    fullName: "Local Seedy",
+    userId: SESSION_USER,
+    displayName,
+    email: signedEmail,
+    fullName: displayName,
   };
 }
 

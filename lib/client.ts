@@ -100,8 +100,8 @@ export function useWorkspace() {
           tried = !!sessionStorage.getItem("ia-signin-tried");
           sessionStorage.setItem("ia-signin-tried", "1");
         } catch {}
-        if (!tried && !signedInRef.current) {
-          // Local development signs in silently; hosted sign-in needs the link.
+        if (!tried && !signedInRef.current && process.env.NODE_ENV !== "production") {
+          // Local development signs in silently; hosted sign-in uses the login screen.
           try {
             await fetch("/signin-with-chatgpt?return_to=/", { credentials: "include" });
             await load();
