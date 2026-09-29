@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { identity, failure, ApiError } from "@/lib/server";
 import { startNotionAuth } from "@/lib/notion";
 

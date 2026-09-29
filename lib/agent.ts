@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { bucket, database, log } from "@/lib/server";
 import { approvedEndpoint, callMcpTools } from "@/lib/mcp-client";
 import { complete, generateImage, type Capabilities, type Gateway, type ToolSpec } from "@/lib/ai";

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { identity, database, saveRecord, log, failure, ApiError } from "@/lib/server";
 import { approvedEndpoint, inspectMcp, McpError } from "@/lib/mcp-client";
 

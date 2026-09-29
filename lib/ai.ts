@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { ApiError, database } from "@/lib/server";
 import { readModelChoice } from "@/lib/models";
 

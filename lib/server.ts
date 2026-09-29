@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 export class ApiError extends Error {
   constructor(

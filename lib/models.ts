@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { database } from "@/lib/server";
 
 export type ModelChoice = {

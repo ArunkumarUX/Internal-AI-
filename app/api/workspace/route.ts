@@ -8,7 +8,7 @@ import {
   userHash,
   ApiError,
 } from "@/lib/server";
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { readModelChoice } from "@/lib/models";
 import { clients as sampleClients } from "@/lib/knowledge";
 

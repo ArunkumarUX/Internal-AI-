@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { env } from "cloudflare:workers";
+import { env } from "@/lib/env";
 import { identity, failure, log, saveRecord, database, ApiError } from "@/lib/server";
 import {
   defaultModels,
