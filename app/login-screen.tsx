@@ -58,6 +58,16 @@ export function LoginScreen({
   const [fieldError, setFieldError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const [domains, setDomains] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/auth/code")
+      .then((r) => (r.ok ? (r.json() as Promise<{ domains?: unknown }>) : null))
+      .then((d) => {
+        if (Array.isArray(d?.domains)) setDomains(d.domains.filter((x): x is string => typeof x === "string"));
+      })
+      .catch(() => {});
+  }, []);
+
   // A refresh while waiting for the email keeps you on the code step.
   useEffect(() => {
     const pending = readPending();
@@ -187,7 +197,21 @@ export function LoginScreen({
         {step === "email" ? (
           <>
             <h1>Sign in to your workspace</h1>
-            <p className="login-lede">Enter your work email and we’ll send you a one-time sign-in code. No password needed.</p>
+            <p className="login-lede">
+              Enter your work email and we’ll send you a one-time sign-in code. No password needed.
+              {domains.length > 0 && (
+                <>
+                  {" "}
+                  Anyone with an {domains.map((d, i) => (
+                    <span key={d}>
+                      {i > 0 && (i === domains.length - 1 ? " or " : ", ")}
+                      <strong className="login-email-shown">@{d}</strong>
+                    </span>
+                  ))}{" "}
+                  email can sign in.
+                </>
+              )}
+            </p>
             <form
               className="login-form"
               noValidate
@@ -299,8 +323,8 @@ export function LoginScreen({
           <>
             <h1>Check your email</h1>
             <p className="login-lede">
-              We sent a 6-digit code to <strong className="login-email-shown">{email.trim()}</strong>. It expires in 10
-              minutes.
+              If <strong className="login-email-shown">{email.trim()}</strong> can use this workspace, we’ve sent it a
+              6-digit code. It expires in 10 minutes.
             </p>
             <form
               className="login-form"

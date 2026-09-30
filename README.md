@@ -37,6 +37,7 @@ The cookie-only local sign-in runs only under the Vite dev server (or with `SITE
 
 Everyone signs in with a one-time code emailed to them. There are no passwords.
 
+- `ALLOWED_EMAIL_DOMAINS` (default `naar.io,nextgentechs.io`): anyone with an email at one of these exact domains can request a code; their account is created on first sign-in. People from other domains must be added in Settings → Team. Removing someone blocks them until they are added back.
 - `AUTH_EMAIL`: the workspace admin. The admin keeps the original workspace, so existing data stays theirs. Optional `AUTH_NAME` sets the admin's display name.
 - `AUTH_SECRET` (required): signs session cookies and sign-in codes. Use a long random value (`openssl rand -hex 32`). Changing it signs everyone out.
 - SMTP for the emails: `SMTP_HOST`, `SMTP_PORT` (587 STARTTLS, or 465 with `SMTP_SECURE=true`), `SMTP_USER`, `SMTP_PASS` and `SMTP_FROM` (e.g. `Internal AI <no-reply@company.com>`). Without SMTP, production refuses to send codes; development prints the code in the server log instead.

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { database, failure, identity, log, ApiError } from "@/lib/server";
-import { adminAccount, listAccounts, normaliseEmail } from "@/lib/accounts";
+import { adminAccount, allowedDomains, listAccounts, normaliseEmail } from "@/lib/accounts";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,7 @@ export async function GET() {
       role: a.role,
       ...(admin || a.id === user.userId ? { email: a.email } : {}),
     }));
-    return Response.json({ me: user.userId, admin, people });
+    return Response.json({ me: user.userId, admin, people, domains: allowedDomains() });
   } catch (e) {
     return failure(e);
   }
@@ -46,26 +46,33 @@ export async function POST(request: Request) {
     if (body.action === "add") {
       const email = normaliseEmail(body.email);
       if (owner && email === owner.email) throw new ApiError("That email is the admin’s sign-in.", 409);
-      const count = await db.prepare("SELECT count(*) AS n FROM members").first<{ n: number }>();
+      const count = await db.prepare("SELECT count(*) AS n FROM members WHERE role<>'blocked'").first<{ n: number }>();
       if ((count?.n ?? 0) >= MAX_MEMBERS) throw new ApiError(`The team is limited to ${MAX_MEMBERS} people.`, 409);
       const id = `u_${crypto.randomUUID()}`;
       const result = await db
         .prepare(
-          "INSERT INTO members (id,email,name,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(email) DO NOTHING",
+          // Re-adding someone who was removed lifts the block.
+          "INSERT INTO members (id,email,name,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET role='member', name=excluded.name, updated_at=excluded.updated_at WHERE members.role='blocked'",
         )
         .bind(id, email, body.name, "", "member", now, now)
         .run();
       if (!result.meta.changes) throw new ApiError("Someone on the team already uses that email.", 409);
       await log(user.userId, "Teammate added", email);
-      return Response.json({ id });
+      // A restored teammate keeps their original id (and workspace).
+      const row = await db.prepare("SELECT id FROM members WHERE email=?").bind(email).first<{ id: string }>();
+      return Response.json({ id: row?.id ?? id });
     }
 
     if (owner && body.id === owner.id)
       throw new ApiError("The admin’s sign-in is set in the deployment settings, not here.", 400);
 
-    // Remove: they lose access immediately. Their messages and conversation
+    // Remove: they lose access immediately and stay blocked (even from an
+    // allowed email domain) until added back. Their messages and conversation
     // membership stay, so others still see who they were talking to.
-    const result = await db.prepare("DELETE FROM members WHERE id=?").bind(body.id).run();
+    const result = await db
+      .prepare("UPDATE members SET role='blocked', updated_at=? WHERE id=? AND role<>'blocked'")
+      .bind(now, body.id)
+      .run();
     if (!result.meta.changes) throw new ApiError("That teammate no longer exists.", 404);
     await log(user.userId, "Teammate removed", body.id);
     return Response.json({ ok: true });

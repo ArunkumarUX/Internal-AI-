@@ -661,7 +661,7 @@ function Thread({
 type TeamMember = Person & { email?: string };
 
 export function TeamSettings({ ws }: { ws: Workspace }) {
-  const [team, setTeam] = useState<{ me: string; admin: boolean; people: TeamMember[] } | null>(null);
+  const [team, setTeam] = useState<{ me: string; admin: boolean; people: TeamMember[]; domains?: string[] } | null>(null);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ name: "", email: "" });
   const [busy, setBusy] = useState("");
@@ -700,6 +700,12 @@ export function TeamSettings({ ws }: { ws: Workspace }) {
   if (!team) return <div className="panel">{error || "Loading the team…"}</div>;
   return (
     <>
+      {team.domains && team.domains.length > 0 && (
+        <div className="notice">
+          Anyone with an {team.domains.map((d) => `@${d}`).join(" or ")} email can sign in with an emailed code. Their
+          account is created the first time they sign in. Add people from other domains below.
+        </div>
+      )}
       {team.admin && (
         <div className="panel">
           <h3>Add a teammate</h3>
@@ -768,7 +774,7 @@ export function TeamSettings({ ws }: { ws: Workspace }) {
                 <span className="team-actions">
                   {removing === p.id ? (
                     <>
-                      <span className="muted-note">Remove {p.name.split(" ")[0]}? They’ll be signed out.</span>
+                      <span className="muted-note">Remove {p.name.split(" ")[0]}? They’ll be signed out and can’t sign in again until you add them back.</span>
                       <button
                         className="secondary-button danger-button"
                         disabled={busy === `remove-${p.id}`}

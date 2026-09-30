@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAccount, EMAIL_PATTERN, secret } from "@/lib/accounts";
+import { adminAccount, allowedDomains, EMAIL_PATTERN, secret } from "@/lib/accounts";
 import { clientAddress, requestCode } from "@/lib/login-codes";
 import { failure, ApiError } from "@/lib/server";
 import { passwordFallback } from "@/lib/mailer";
 
 export const dynamic = "force-dynamic";
+
+/** Which organisation domains can sign in, for the sign-in page's hint. */
+export function GET() {
+  return NextResponse.json({ domains: allowedDomains() });
+}
 
 /** Step 1: email a one-time sign-in code. */
 export async function POST(request: NextRequest) {

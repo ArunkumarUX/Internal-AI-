@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 import { database, ApiError } from "@/lib/server";
-import { accountByEmail, hmac, normaliseEmail, same, type Account } from "@/lib/accounts";
+import { accountByEmail, accountForSignIn, canSignIn, hmac, nameFromEmail, normaliseEmail, same, type Account } from "@/lib/accounts";
 import { sendLoginCode } from "@/lib/mailer";
 
 /*
@@ -67,7 +67,9 @@ export async function requestCode(rawEmail: string, address: string) {
   }
   if (!(await allow(`send:email:${email}`, LIMITS.sendPerEmail))) throw tooMany();
 
-  const account = await accountByEmail(email);
+  // Existing accounts, plus new people from an allowed organisation domain.
+  const allowed = await canSignIn(email);
+  const known = allowed ? await accountByEmail(email) : null;
   // Record a placeholder for unknown emails too, so the resend timer and
   // limits behave identically and don't reveal who is on the team.
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
@@ -77,14 +79,14 @@ export async function requestCode(rawEmail: string, address: string) {
     )
     .bind(
       email,
-      account ? codeHash(email, code) : "none",
+      allowed ? codeHash(email, code) : "none",
       new Date(now + CODE_MINUTES * 60 * 1000).toISOString(),
       new Date(now).toISOString(),
     )
     .run();
-  if (account) {
+  if (allowed) {
     try {
-      await sendLoginCode(account.email, account.name, code, CODE_MINUTES);
+      await sendLoginCode(email, known?.name ?? nameFromEmail(email), code, CODE_MINUTES);
     } catch (error) {
       // Let them retry straight away if the email never left.
       await db.prepare("DELETE FROM login_codes WHERE email=?").bind(email).run();
@@ -136,7 +138,8 @@ export async function verifyCode(rawEmail: string, rawCode: string, address: str
     .bind(email, row.code_hash)
     .run();
   if (!used.meta.changes) throw expired;
-  const account = await accountByEmail(email);
+  // First sign-in from an allowed domain creates the account here.
+  const account = await accountForSignIn(email);
   if (!account) throw expired; // removed between sending and signing in
   return account;
 }
