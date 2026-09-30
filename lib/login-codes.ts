@@ -97,12 +97,18 @@ export async function requestCode(rawEmail: string, address: string) {
   return { wait: RESEND_SECONDS };
 }
 
+/** Rate limit for any sign-in check (codes, and the admin password fallback). */
+export async function verifyThrottle(rawEmail: string, address: string) {
+  const email = normaliseEmail(rawEmail);
+  if (!(await allow(`check:ip:${address}`, LIMITS.checkPerAddress))) throw tooMany();
+  if (!(await allow(`check:email:${email}`, LIMITS.checkPerEmail))) throw tooMany();
+}
+
 /** Checks a code and returns the account it signs in, or throws. */
 export async function verifyCode(rawEmail: string, rawCode: string, address: string): Promise<Account> {
   const email = normaliseEmail(rawEmail);
   const code = rawCode.replace(/\s|-/g, "");
-  if (!(await allow(`check:ip:${address}`, LIMITS.checkPerAddress))) throw tooMany();
-  if (!(await allow(`check:email:${email}`, LIMITS.checkPerEmail))) throw tooMany();
+  await verifyThrottle(email, address);
   const wrong = new ApiError("That code isn’t right. Check the latest email and try again.", 401, "bad_code");
   if (!/^\d{6}$/.test(code)) throw wrong;
   const db = database();

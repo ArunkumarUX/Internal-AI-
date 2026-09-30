@@ -44,7 +44,9 @@ export function LoginScreen({
 }) {
   const emailRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState<"email" | "code">("email");
+  const [step, setStep] = useState<"email" | "code" | "password">("email");
+  const [password, setPassword] = useState("");
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -88,6 +90,13 @@ export function LoginScreen({
     setNotice("");
     try {
       const { ok, data } = await post("/api/auth/code", { email: address });
+      if (!ok && data.code === "use_password") {
+        // Email isn't set up on this workspace yet: the admin signs in with their password.
+        setStep("password");
+        setNotice("Email sign-in isn’t set up yet. The workspace admin can sign in with their password.");
+        requestAnimationFrame(() => passwordRef.current?.focus());
+        return;
+      }
       if (!ok) {
         setFormError(typeof data.error === "string" ? data.error : "We couldn’t send a code. Please try again.");
         return;
@@ -133,7 +142,32 @@ export function LoginScreen({
     }
   }
 
+  async function signInWithPassword() {
+    if (!password) {
+      setFieldError("Enter your password.");
+      passwordRef.current?.focus();
+      return;
+    }
+    setBusy(true);
+    setFieldError("");
+    setFormError("");
+    try {
+      const { ok, data } = await post("/api/auth/login", { email: email.trim(), password });
+      if (!ok) {
+        setFormError(typeof data.error === "string" ? data.error : "Those details didn’t match. Please try again.");
+        passwordRef.current?.focus();
+        return;
+      }
+      await onSignedIn();
+    } catch {
+      setFormError("The workspace couldn’t be reached. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function changeEmail() {
+    setPassword("");
     writePending(null);
     setStep("email");
     setCode("");
@@ -200,6 +234,65 @@ export function LoginScreen({
                   "Email me a code"
                 )}
               </button>
+            </form>
+          </>
+        ) : step === "password" ? (
+          <>
+            <h1>Admin sign-in</h1>
+            <p className="login-lede">
+              Signing in as <strong className="login-email-shown">{email.trim()}</strong>.
+            </p>
+            <form
+              className="login-form"
+              noValidate
+              onSubmit={(e: FormEvent) => {
+                e.preventDefault();
+                void signInWithPassword();
+              }}
+            >
+              {formError ? (
+                <p className="login-alert" role="alert">
+                  {formError}
+                </p>
+              ) : notice ? (
+                <p className="login-notice" role="status">
+                  {notice}
+                </p>
+              ) : null}
+              <label htmlFor="login-password">
+                Admin password
+                <input
+                  ref={passwordRef}
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  aria-invalid={fieldError ? true : undefined}
+                  aria-describedby={fieldError ? "login-field-error" : undefined}
+                />
+              </label>
+              {fieldError ? (
+                <p id="login-field-error" className="login-field-error">
+                  {fieldError}
+                </p>
+              ) : null}
+              <button className="primary-button login-submit" type="submit" disabled={busy}>
+                {busy ? (
+                  <>
+                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                    Signing in…
+                  </>
+                ) : (
+                  "Sign in"
+                )}
+              </button>
+              <div className="login-actions">
+                <button type="button" className="login-link" onClick={changeEmail}>
+                  <ArrowLeft size={14} aria-hidden="true" /> Use a different email
+                </button>
+              </div>
             </form>
           </>
         ) : (

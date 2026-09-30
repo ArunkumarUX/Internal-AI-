@@ -8,8 +8,18 @@ import { ApiError } from "@/lib/server";
  * In development without SMTP_HOST the code is printed to the server log.
  */
 
+/** SMTP is usable once a host and a sign-in user are both set. */
 export function mailConfigured() {
-  return !!process.env.SMTP_HOST?.trim();
+  return !!process.env.SMTP_HOST?.trim() && !!process.env.SMTP_USER?.trim();
+}
+
+/**
+ * Until SMTP is set up in production, the admin can still sign in with
+ * AUTH_PASSWORD so nobody is locked out. It switches off by itself once SMTP
+ * is configured. Development always prints codes, so it never needs this.
+ */
+export function passwordFallback() {
+  return process.env.NODE_ENV === "production" && !mailConfigured() && !!process.env.AUTH_PASSWORD;
 }
 
 type Transport = { sendMail: (message: Record<string, unknown>) => Promise<unknown> };
@@ -42,7 +52,11 @@ export async function sendLoginCode(to: string, name: string, code: string, minu
       console.info(`[auth] Sign-in code for ${to}: ${code} (SMTP isn't configured, so it wasn't emailed)`);
       return;
     }
-    throw new ApiError("Email sign-in isn’t set up for this workspace yet. Ask your admin to configure SMTP.", 503);
+    throw new ApiError(
+      "Email sign-in isn’t set up for this workspace yet. Ask your admin to configure SMTP.",
+      503,
+      passwordFallback() ? "use_password" : "email_unavailable",
+    );
   }
   const from = process.env.SMTP_FROM?.trim() || process.env.SMTP_USER?.trim();
   if (!from) throw new ApiError("Email sign-in isn’t set up for this workspace yet. Ask your admin to set SMTP_FROM.", 503);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAccount, EMAIL_PATTERN, secret } from "@/lib/accounts";
 import { clientAddress, requestCode } from "@/lib/login-codes";
 import { failure, ApiError } from "@/lib/server";
+import { passwordFallback } from "@/lib/mailer";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,9 @@ export async function POST(request: NextRequest) {
     const email = typeof body?.email === "string" ? body.email.trim() : "";
     if (!EMAIL_PATTERN.test(email) || email.length > 200)
       throw new ApiError("Enter your work email, like name@company.com.");
+    // No email yet: send the admin to the password step instead of pretending a code went out.
+    if (passwordFallback())
+      throw new ApiError("Email sign-in isn’t set up yet. The workspace admin can sign in with their password.", 503, "use_password");
     const { wait } = await requestCode(email, clientAddress(request));
     return NextResponse.json({ ok: true, wait });
   } catch (e) {
