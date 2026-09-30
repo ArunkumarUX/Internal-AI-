@@ -89,6 +89,7 @@ import {
   type Source,
 } from "@/lib/knowledge";
 import { api, downloadText, initialsOf, type Workspace } from "@/lib/client";
+import { TeamSettings } from "./messages";
 type Props = {
   ws: Workspace;
   ask: (q: string, options?: { attachmentIds?: string[] }) => void;
@@ -2487,7 +2488,7 @@ function ModelsPanel({ ws }: { ws: Workspace }) {
   );
 }
 export function Settings({ ws, setView }: Props) {
-  const SETTINGS_TABS = ["Integrations", "Models", "MCP servers", "Preferences", "Governance", "Product phases"];
+  const SETTINGS_TABS = ["Integrations", "Team", "Models", "MCP servers", "Preferences", "Governance", "Product phases"];
   const slug = (t: string) => t.toLowerCase().replaceAll(" ", "-");
   // #settings-mcp-servers opens that tab directly.
   const [tab, setTabState] = useState(() => {
@@ -2593,6 +2594,7 @@ export function Settings({ ws, setView }: Props) {
         <TabsList className="wide-tabs">
           {[
             "Integrations",
+            "Team",
             "Models",
             "MCP servers",
             "Preferences",
@@ -2840,6 +2842,9 @@ export function Settings({ ws, setView }: Props) {
             connected server (Agent skills → Custom MCP tools). Write tools are
             never called automatically. Nothing is written back to Notion.
           </div>
+        </TabsContent>
+        <TabsContent value="Team">
+          <TeamSettings ws={ws} />
         </TabsContent>
         <TabsContent value="Preferences">
           <div className="panel">

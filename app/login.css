@@ -1,0 +1,25 @@
+/* Email-code sign-in: additions on top of the login styles in globals.css */
+.login-form input.login-code {
+  height: 56px;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: 0.4em;
+  padding-left: calc(14px + 0.4em);
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.login-form input.login-code::placeholder { color: #cdd4e1; }
+.login-email-shown { color: var(--kit-ink); font-weight: 600; overflow-wrap: anywhere; }
+.login-help { margin: 0; font-size: 12.5px; color: var(--kit-muted); }
+.login-notice {
+  margin: 0; padding: 10px 12px; border-radius: 12px;
+  background: var(--kit-indigo-wash); color: var(--kit-ink); font-size: 13px; line-height: 1.4;
+}
+.login-actions { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.login-link {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 2px;
+  font-size: 13px; font-weight: 550; color: var(--kit-indigo);
+}
+.login-link:hover:not(:disabled) { text-decoration: underline; }
+.login-link:disabled { color: var(--kit-muted); cursor: default; }

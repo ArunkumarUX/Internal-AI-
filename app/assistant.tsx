@@ -1218,23 +1218,201 @@ export function DictateButton({
   if (!speech.supported) return null;
   const blocked = meetingLive && !speech.listening;
   return (
-    <button
-      type="button"
-      className={`${className}${speech.listening ? " dictating" : ""}`}
-      aria-label={speech.listening ? "Stop dictation" : "Dictate with Echo"}
-      aria-pressed={speech.listening}
-      disabled={blocked}
-      title={
-        blocked
-          ? "Pause the meeting recording to dictate"
-          : speech.listening
-            ? speech.interim || "Listening…"
-            : "Dictate (Echo)"
-      }
-      onClick={() => (speech.listening ? speech.stop() : speech.start())}
-    >
-      {speech.listening ? <AudioLines size={18} /> : <Mic size={18} />}
-    </button>
+    <span className="echo-wrap">
+      <button
+        type="button"
+        className={`${className}${speech.listening ? " dictating" : ""}`}
+        aria-label={speech.listening ? "Stop dictation" : "Dictate with Echo"}
+        aria-pressed={speech.listening}
+        disabled={blocked}
+        title={
+          blocked ? "Pause the meeting recording to dictate" : speech.listening ? "Stop dictation" : "Dictate (Echo)"
+        }
+        onClick={() => (speech.listening ? speech.stop() : speech.start())}
+      >
+        {speech.listening ? <AudioLines size={18} /> : <Mic size={18} />}
+      </button>
+      {speech.listening && <EchoCaption interim={speech.interim} />}
+    </span>
+  );
+}
+
+/** Live words while Echo is listening, so speech is visible before it's final. */
+function EchoCaption({ interim, style }: { interim: string; style?: React.CSSProperties }) {
+  return (
+    <span className="echo-caption" role="status" aria-live="polite" style={style}>
+      <i aria-hidden />
+      {interim ? <em>{interim.trim().slice(-120)}</em> : "Listening… click the mic to stop"}
+    </span>
+  );
+}
+
+/** Text inputs Echo can dictate into. Passwords, emails, numbers and dates are left alone. */
+function echoField(el: Element | null): HTMLTextAreaElement | HTMLInputElement | null {
+  if (!el || !(el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)) return null;
+  if (el instanceof HTMLInputElement && !["text", "search", ""].includes(el.type)) return null;
+  if (el.disabled || el.readOnly) return null;
+  // These fields already have their own Echo button, or aren't prose.
+  if (el.closest(".composer, .qa-composer, .beacon, [data-echo='off'], [role='combobox']")) return null;
+  return el;
+}
+
+/** Inserts dictated text at the caret so React's onChange and the undo stack both see it. */
+function insertAtCaret(el: HTMLTextAreaElement | HTMLInputElement, text: string) {
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  const before = el.value.slice(0, start);
+  const after = el.value.slice(end);
+  const spaced = (before && !/\s$/.test(before) ? " " : "") + text + (after && !/^\s/.test(after) ? " " : "");
+  const room = el.maxLength > 0 ? el.maxLength - (el.value.length - (end - start)) : Infinity;
+  const insert = spaced.slice(0, Math.max(0, room));
+  if (!insert) {
+    toast.error("This field is full.");
+    return;
+  }
+  if (document.activeElement !== el) el.focus({ preventScroll: true });
+  if (document.execCommand?.("insertText", false, insert)) return;
+  // Fallback: set the value the way React expects, then announce the change.
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, el.value.slice(0, start) + insert + el.value.slice(end));
+  el.setSelectionRange(start + insert.length, start + insert.length);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+const ECHO_SIZE = 30;
+
+/**
+ * Echo everywhere: a small mic appears in whichever text field has focus,
+ * so any note, description or outcome can be dictated.
+ */
+export function EchoAnywhere({ enabled, lang }: { enabled: boolean; lang?: string }) {
+  const [field, setField] = useState<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const fieldRef = useRef(field);
+  fieldRef.current = field;
+  const button = useRef<HTMLButtonElement>(null);
+  const speech = useSpeech(
+    (text) => {
+      const el = fieldRef.current;
+      if (el?.isConnected && text) insertAtCaret(el, text);
+    },
+    lang,
+    "dictation",
+  );
+  const listening = speech.listening;
+  const stopRef = useRef(speech.stop);
+  stopRef.current = speech.stop;
+  const toggle = () => (listening ? speech.stop() : speech.start());
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+  const meetingLive = useMicBusy();
+  // Follow focus into supported fields.
+  useEffect(() => {
+    if (!enabled || !speech.supported) {
+      setField(null);
+      return;
+    }
+    const onFocusIn = (e: FocusEvent) => {
+      if (button.current?.contains(e.target as Node)) return;
+      const next = echoField(e.target as Element);
+      if (next !== fieldRef.current) stopRef.current();
+      setField(next);
+    };
+    const onFocusOut = () => {
+      // Moving to the mic itself keeps the field; anywhere else closes it.
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (button.current?.contains(active) || active === fieldRef.current) return;
+        stopRef.current();
+        setField(null);
+      }, 0);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    setField(echoField(document.activeElement));
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, [enabled, speech.supported]);
+  // Keep the mic pinned to the field while the page scrolls or resizes.
+  useEffect(() => {
+    if (!field) {
+      setRect(null);
+      return;
+    }
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!field.isConnected) {
+          stopRef.current();
+          setField(null);
+          return;
+        }
+        setRect(field.getBoundingClientRect());
+      });
+    };
+    setRect(field.getBoundingClientRect());
+    const ro = new ResizeObserver(measure);
+    ro.observe(field);
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [field]);
+  // ⌥⌘D / Alt+Ctrl+D toggles dictation in the focused field.
+  useEffect(() => {
+    if (!field) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "d" || !e.altKey || !(e.metaKey || e.ctrlKey) || e.shiftKey) return;
+      e.preventDefault();
+      toggleRef.current();
+    };
+    const el: HTMLElement = field;
+    el.addEventListener("keydown", key);
+    return () => el.removeEventListener("keydown", key);
+  }, [field]);
+  if (!field || !rect || rect.width < 120 || rect.height === 0) return null;
+  const multiline = field instanceof HTMLTextAreaElement && rect.height > ECHO_SIZE * 1.6;
+  const left = rect.right - ECHO_SIZE - 6;
+  const top = multiline ? rect.bottom - ECHO_SIZE - 6 : rect.top + (rect.height - ECHO_SIZE) / 2;
+  if (top < 0 || top > window.innerHeight) return null;
+  const blocked = meetingLive && !listening;
+  const shortcut = isMac() ? "⌥⌘D" : "Alt+Ctrl+D";
+  return (
+    <>
+      <button
+        ref={button}
+        type="button"
+        className={`echo-anywhere${listening ? " dictating" : ""}`}
+        style={{ left, top }}
+        aria-label={listening ? "Stop dictation" : "Dictate into this field with Echo"}
+        aria-pressed={listening}
+        aria-keyshortcuts={isMac() ? "Alt+Meta+D" : "Alt+Control+D"}
+        disabled={blocked}
+        title={blocked ? "Pause the meeting recording to dictate" : `${listening ? "Stop" : "Dictate"} (${shortcut})`}
+        // Keep the caret in the field so dictated words land where you were typing.
+        onPointerDown={(e) => e.preventDefault()}
+        onClick={toggle}
+      >
+        {listening ? <AudioLines size={15} /> : <Mic size={15} />}
+      </button>
+      {listening && (
+        <EchoCaption
+          interim={speech.interim}
+          style={{
+            position: "fixed",
+            right: Math.max(EDGE, window.innerWidth - rect.right),
+            top: top > 64 ? top - 44 : top + ECHO_SIZE + 8,
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -1259,13 +1437,32 @@ const PROMPT_STARTERS = [
   "Create meeting notes with decisions and action items",
 ];
 
-/** Suggests the rest of the prompt: whole-sentence first, then the current word. */
-export function suggestCompletion(prompt: string, vocabulary: string[]) {
+export type Completions = {
+  /** Whole prompts, most relevant first. */
+  starters: string[];
+  /** Document titles, completed after "Summarise the document: ". */
+  documents: string[];
+  /** Single words and names, shortest first. */
+  vocabulary: string[];
+};
+
+const DOCUMENT_PREFIX = /(summari[sz]e|compare|explain) the document:\s*/i;
+
+/**
+ * Suggests the rest of the prompt: a document title after "the document:",
+ * then a whole prompt, then the word being typed. Case-insensitive; the
+ * suggestion only ever adds text after what was typed.
+ */
+export function suggestCompletion(prompt: string, { starters, documents, vocabulary }: Completions) {
   if (prompt.length < 3 || prompt.endsWith("\n")) return "";
+  const doc = prompt.match(DOCUMENT_PREFIX);
+  if (doc && doc.index !== undefined) {
+    const typed = prompt.slice(doc.index + doc[0].length).toLowerCase();
+    const title = documents.find((t) => t.toLowerCase().startsWith(typed) && t.length > typed.length);
+    if (title) return title.slice(typed.length);
+  }
   const lower = prompt.toLowerCase();
-  const sentence = PROMPT_STARTERS.find(
-    (s) => s.toLowerCase().startsWith(lower) && s.length > prompt.length,
-  );
+  const sentence = starters.find((s) => s.toLowerCase().startsWith(lower) && s.length > prompt.length);
   if (sentence) return sentence.slice(prompt.length);
   const word = prompt.match(/([A-Za-z][\w-]{2,})$/)?.[1];
   if (!word) return "";
@@ -1275,17 +1472,37 @@ export function suggestCompletion(prompt: string, vocabulary: string[]) {
   return match ? match.slice(word.length) : "";
 }
 
-export function useVocabulary(ws: Workspace) {
+/** Everything Tab can suggest, built in the browser from this workspace. */
+export function useCompletions(ws: Workspace): Completions {
+  const records = ws.state.records;
   return useMemo(() => {
+    // Your own recent single-line questions come first: they are what you ask.
+    const asked = new Set<string>();
+    for (const r of records) {
+      if (r.kind !== "conversation") continue;
+      const q = String(r.data.query ?? "").trim();
+      if (q.length >= 12 && q.length <= 160 && !q.includes("\n")) asked.add(q);
+      if (asked.size >= 30) break;
+    }
+    const perClient = ws.allClients.flatMap((c) => [
+      `Prepare me for the ${c.name} meeting`,
+      `What are the open actions for ${c.name}?`,
+      `Summarise the latest decisions for ${c.name}`,
+      `Draft a follow-up email to ${c.name}`,
+      `What are the risks on the ${c.name} account?`,
+    ]);
+    const starters = [...new Set([...asked, ...PROMPT_STARTERS, ...perClient])];
+    const documents = [...new Set(ws.allSources.map((s) => s.title).filter(Boolean))];
     const words = new Set<string>();
-    for (const text of [
-      ...ws.allSources.map((s) => s.title),
-      ...ws.allClients.map((c) => c.name),
-    ])
+    for (const text of [...documents, ...ws.allClients.map((c) => c.name)])
       for (const w of text.split(/[^\w-]+/)) if (w.length > 4) words.add(w);
     ws.allClients.forEach((c) => words.add(c.name));
-    return [...words].sort((a, b) => a.length - b.length);
-  }, [ws.allSources, ws.allClients]);
+    return {
+      starters,
+      documents,
+      vocabulary: [...words].sort((a, b) => a.length - b.length),
+    };
+  }, [records, ws.allSources, ws.allClients]);
 }
 
 /** True on touch-first devices, where there's no Tab key to accept a suggestion. */
@@ -1377,8 +1594,9 @@ const BEACON_ACTIONS = [
   ["Summarise", "Summarise this in three bullet points"],
   ["Explain", "Explain this in plain language"],
   ["Find evidence", "Find evidence in our knowledge for this"],
-  ["Translate", "Translate this into French"],
 ] as const;
+
+const TRANSLATE_TO = ["English", "French", "German", "Spanish", "Hindi", "Tamil"] as const;
 
 const BEACON_HEIGHT = 96;
 const EDGE = 16;
@@ -1395,6 +1613,7 @@ export function Beacon({
     null,
   );
   const [value, setValue] = useState("");
+  const [translating, setTranslating] = useState(false);
   const pill = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const shown = useRef("");
@@ -1438,7 +1657,10 @@ export function Beacon({
         y: Math.max(EDGE, Math.min(y, vh - BEACON_HEIGHT - EDGE)),
         focus: source === "mouse" && !isCoarsePointer(),
       };
-      if (shown.current !== next.text) setValue("");
+      if (shown.current !== next.text) {
+        setValue("");
+        setTranslating(false);
+      }
       shown.current = next.text;
       setTarget(next);
     };
@@ -1505,6 +1727,7 @@ export function Beacon({
     if (open) return;
     shown.current = "";
     setValue("");
+    setTranslating(false);
   }, [open]);
   // "/" jumps into the pill's instruction field.
   useEffect(() => {
@@ -1558,11 +1781,29 @@ export function Beacon({
         </button>
       </form>
       <div className="beacon-actions">
-        {BEACON_ACTIONS.map(([label, instruction]) => (
-          <button key={label} type="button" onClick={() => run(instruction)}>
-            {label}
-          </button>
-        ))}
+        {translating ? (
+          <>
+            <button type="button" aria-label="Back to actions" onClick={() => setTranslating(false)}>
+              <ChevronLeft size={13} />
+            </button>
+            {TRANSLATE_TO.map((language) => (
+              <button key={language} type="button" onClick={() => run(`Translate this into ${language}`)}>
+                {language}
+              </button>
+            ))}
+          </>
+        ) : (
+          <>
+            {BEACON_ACTIONS.map(([label, instruction]) => (
+              <button key={label} type="button" onClick={() => run(instruction)}>
+                {label}
+              </button>
+            ))}
+            <button type="button" onClick={() => setTranslating(true)}>
+              Translate…
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1606,6 +1847,7 @@ export function QuickAssistant({
   onClose,
   ask,
   echo,
+  tab,
   lang,
   ready,
 }: {
@@ -1616,9 +1858,14 @@ export function QuickAssistant({
   onClose: () => void;
   ask: (q: string, options?: { attachmentIds?: string[] }) => boolean;
   echo: boolean;
+  /** Magic Tab: inline completions in the quick assistant too. */
+  tab: boolean;
   lang?: string;
 }) {
   const [value, setValue] = useState("");
+  const [caretAtEnd, setCaretAtEnd] = useState(true);
+  const completions = useCompletions(ws);
+  const suggestion = tab && caretAtEnd ? suggestCompletion(value, completions) : "";
   // Keep the latest onClose without re-running the open effect each render.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -1764,20 +2011,41 @@ export function QuickAssistant({
         </div>
       )}
       <div className="qa-composer">
-        <textarea
-          ref={input}
-          value={value}
-          rows={2}
-          placeholder="Summarise, draft, explain…"
-          aria-label="Ask the quick assistant"
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send();
+        <div className="ghost-field">
+          <GhostText target={input} value={value} suggestion={suggestion} />
+          <textarea
+            ref={input}
+            value={value}
+            rows={2}
+            placeholder="Summarise, draft, explain…"
+            aria-label="Ask the quick assistant"
+            onChange={(e) => {
+              setValue(e.target.value);
+              setCaretAtEnd(e.target.selectionStart === e.target.value.length);
+            }}
+            onSelect={(e) =>
+              setCaretAtEnd(
+                e.currentTarget.selectionStart === e.currentTarget.value.length &&
+                  e.currentTarget.selectionEnd === e.currentTarget.value.length,
+              )
             }
-          }}
-        />
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              // Accept the suggestion before the focus trap sees Tab.
+              if (e.key === "Tab" && suggestion && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                setValue(value + suggestion);
+                return;
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+        </div>
+        {suggestion && <SuggestionChip suggestion={suggestion} onAccept={() => setValue(value + suggestion)} />}
         <div className="qa-bar">
           {canCapture && (
           <button
@@ -2016,10 +2284,12 @@ export function MagicFeatures({
               }
             />
           </div>
-          {slide.key === "desktop" && (
+          {slide.key === "desktop" ? (
             <button className="primary-button magic-cta" onClick={openAssistant}>
               Open the assistant {!coarse && <kbd>{shortcut}</kbd>}
             </button>
+          ) : (
+            <MagicTry ws={ws} kind={slide.key} on={prefs.magic[slide.key]} />
           )}
           <div className="magic-dots" role="group" aria-label="Feature slides">
             {SLIDES.map((s, i) => (
@@ -2035,6 +2305,65 @@ export function MagicFeatures({
         </article>
       </div>
     </>
+  );
+}
+
+/** A live field to try the feature right where it's switched on. */
+function MagicTry({ ws, kind, on }: { ws: Workspace; kind: Exclude<MagicKey, "desktop">; on: boolean }) {
+  const [text, setText] = useState("");
+  const [caretAtEnd, setCaretAtEnd] = useState(true);
+  const field = useRef<HTMLTextAreaElement>(null);
+  const completions = useCompletions(ws);
+  const suggestion = kind === "tab" && on && caretAtEnd ? suggestCompletion(text, completions) : "";
+  const label = { echo: "Try Echo", tab: "Try Tab", beacon: "Try Beacon" }[kind];
+  if (!on)
+    return (
+      <p className="magic-try muted-note" id={`magic-try-${kind}`}>
+        Turn this on to try it here.
+      </p>
+    );
+  if (kind === "beacon")
+    return (
+      <div className="magic-try">
+        <strong>{label}</strong>
+        <p className="magic-try-sample">
+          Northstar Bank wants on-device inference for sensitive workloads and a clear answer on data
+          residency before procurement signs off.
+        </p>
+        <small className="muted-note">Select any part of the sentence above, then pick an action.</small>
+      </div>
+    );
+  return (
+    <label className="magic-try">
+      <strong>{label}</strong>
+      <div className="ghost-field">
+        <GhostText target={field} value={text} suggestion={suggestion} />
+        <textarea
+          ref={field}
+          rows={2}
+          value={text}
+          placeholder={kind === "echo" ? "Click the mic in this field, then speak…" : "Start typing “Prepare me for”…"}
+          onChange={(e) => {
+            setText(e.target.value);
+            setCaretAtEnd(e.target.selectionStart === e.target.value.length);
+          }}
+          onSelect={(e) =>
+            setCaretAtEnd(
+              e.currentTarget.selectionStart === e.currentTarget.value.length &&
+                e.currentTarget.selectionEnd === e.currentTarget.value.length,
+            )
+          }
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (e.key === "Tab" && suggestion && !e.shiftKey) {
+              e.preventDefault();
+              setText(text + suggestion);
+            }
+          }}
+        />
+      </div>
+      {suggestion && <SuggestionChip suggestion={suggestion} onAccept={() => setText(text + suggestion)} />}
+    </label>
   );
 }
 

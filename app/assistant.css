@@ -71,3 +71,50 @@
   flex-shrink: 0; padding: 0 6px; border: 1px solid var(--mf-night-line); border-radius: 5px;
   font-size: 11px; line-height: 18px; color: #9ba3bb; background: transparent;
 }
+
+/* Echo: live caption while listening */
+.echo-wrap { position: relative; display: inline-flex; }
+.echo-caption {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 70;
+  display: flex; align-items: center; gap: 8px; width: max-content; max-width: min(360px, calc(100vw - 32px));
+  padding: 7px 12px; border-radius: 10px; background: var(--mf-night); color: #d5dbeb;
+  font-size: 13px; line-height: 1.4; box-shadow: 0 10px 30px #0f172a33; pointer-events: none;
+}
+.echo-caption em { font-style: normal; color: #fff; overflow-wrap: anywhere; }
+.echo-caption i { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: #e5484d; animation: mf-pulse 1.3s ease-in-out infinite; }
+
+/* Echo in any text field */
+.echo-anywhere {
+  position: fixed; z-index: 65; display: grid; place-items: center; width: 30px; height: 30px;
+  border: 1px solid var(--kit-border); border-radius: 8px; background: #fff; color: var(--kit-muted);
+  box-shadow: 0 2px 8px #0f172a14;
+}
+.echo-anywhere:hover { color: var(--kit-indigo); border-color: var(--kit-indigo); }
+.echo-anywhere:disabled { opacity: 0.5; }
+.echo-anywhere.dictating { color: #e5484d; background: #fdecec; border-color: #f3c7c9; animation: mf-pulse 1.3s ease-in-out infinite; }
+
+/* Tab in the quick assistant (dark surface) */
+.qa-composer .ghost-text em { color: #6f7893; }
+.qa-composer .ghost-text kbd { background: transparent; border-color: var(--mf-night-line); color: #8891aa; }
+.qa-composer .suggestion-chip { background: var(--mf-night); border-color: var(--mf-night-line); color: #d5dbeb; }
+
+/* Beacon: translate back arrow */
+.beacon-actions button svg { vertical-align: -2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .echo-caption i, .echo-anywhere.dictating { animation: none; }
+}
+
+/* Magic features: try it */
+.magic-try { display: grid; gap: 8px; margin-top: 18px; }
+.magic-try > strong { font-size: 14px; font-weight: 600; }
+.magic-try textarea {
+  width: 100%; resize: vertical; padding: 10px 44px 10px 12px; border: 1px solid var(--kit-border);
+  border-radius: 10px; background: #fff; font-size: 14.5px; line-height: 1.5; color: var(--kit-ink);
+}
+.magic-try textarea:focus { outline: 2px solid var(--kit-indigo); outline-offset: -1px; }
+.magic-try-sample {
+  margin: 0; padding: 12px 14px; border: 1px dashed var(--kit-border); border-radius: 10px;
+  background: var(--kit-indigo-wash); font-size: 14.5px; line-height: 1.55;
+}
+p.magic-try { margin: 16px 0 0; }

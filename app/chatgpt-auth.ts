@@ -1,12 +1,15 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { EMAIL_COOKIE, SESSION_COOKIE, SESSION_USER } from "@/lib/auth-session";
+import { SESSION_COOKIE } from "@/lib/auth-session";
+import { accountById, readSession, type Role } from "@/lib/accounts";
 
 export type ChatGPTUser = {
   userId: string;
   displayName: string;
   email: string;
   fullName: string | null;
+  /** Workspace role for cookie sessions; ChatGPT Sites users have none. */
+  role?: Role;
 };
 
 const USER_ID_HEADER = "oai-authenticated-user-id";
@@ -20,9 +23,13 @@ const SIGN_OUT_PATH = "/signout-with-chatgpt";
 const CALLBACK_PATH = "/callback";
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
+  // oai-* identity headers are only set by the ChatGPT Sites platform. Where
+  // cookie sessions are in use (Vercel, local dev) a browser could send them
+  // itself, so they are ignored there.
+  const cookieMode = localSessionAllowed();
   const requestHeaders = await headers();
-  const userId = requestHeaders.get(USER_ID_HEADER);
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
+  const userId = cookieMode ? null : requestHeaders.get(USER_ID_HEADER);
+  const email = cookieMode ? null : requestHeaders.get(USER_EMAIL_HEADER);
   if (userId && email) {
     const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
     const fullName =
@@ -39,21 +46,19 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
     };
   }
 
-  if (!localSessionAllowed()) return null;
+  if (!cookieMode) return null;
   const jar = await cookies();
-  const session = jar.get(SESSION_COOKIE)?.value;
-  if (session !== SESSION_USER) return null;
-  const sessionEmail = jar.get(EMAIL_COOKIE)?.value;
-  const signedEmail =
-    sessionEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sessionEmail)
-      ? sessionEmail
-      : "seedy@local.test";
-  const displayName = signedEmail === "seedy@local.test" ? "Local Seedy" : signedEmail;
+  const sessionUser = readSession(jar.get(SESSION_COOKIE)?.value);
+  if (!sessionUser) return null;
+  // Removed teammates lose access on their next request.
+  const account = await accountById(sessionUser).catch(() => null);
+  if (!account) return null;
   return {
-    userId: SESSION_USER,
-    displayName,
-    email: signedEmail,
-    fullName: displayName,
+    userId: account.id,
+    displayName: account.name,
+    email: account.email,
+    fullName: account.name,
+    role: account.role,
   };
 }
 

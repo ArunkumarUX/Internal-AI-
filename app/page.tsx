@@ -7,6 +7,7 @@ import {
   BookOpen,
   Building2,
   Users,
+  MessagesSquare,
   CheckCheck,
   Lightbulb,
   Bookmark,
@@ -102,11 +103,13 @@ import { UploadSheet } from "./upload-sheet";
 import { LoginScreen, LoginSplash } from "./login-screen";
 import { Intelligence } from "./intelligence";
 import { ChatExchange, type ChatMessage } from "./chat";
+import { MessagesView, useUnreadMessages } from "./messages";
 import {
   AgentSkills,
   MeetingAssistant,
   MagicFeatures,
   Beacon,
+  EchoAnywhere,
   QuickAssistant,
   GhostText,
   DictateButton,
@@ -115,7 +118,7 @@ import {
   useJobScheduler,
   suggestCompletion,
   useAssistantPrefs,
-  useVocabulary,
+  useCompletions,
 } from "./assistant";
 const items = [
   ["Ask", MessageCircle],
@@ -123,6 +126,7 @@ const items = [
   ["Knowledge", BookOpen],
   ["Clients", Building2],
   ["People", Users],
+  ["Messages", MessagesSquare],
   ["Actions", CheckCheck],
   ["Saved work", Bookmark],
 ] as const;
@@ -235,11 +239,12 @@ export default function Home() {
   }, [historyOpen]);
   const [deleting, setDeleting] = useState(false);
   const { prefs: assistant } = useAssistantPrefs(ws);
-  const vocabulary = useVocabulary(ws);
+  const completions = useCompletions(ws);
+  const unreadMessages = useUnreadMessages(!!ws.state.user, view === "Messages");
   useJobScheduler(ws, !!assistant.skills.jobs);
   const [caretAtEnd, setCaretAtEnd] = useState(true);
   const suggestion = assistant.magic.tab && caretAtEnd
-    ? suggestCompletion(prompt, vocabulary)
+    ? suggestCompletion(prompt, completions)
     : "";
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -941,6 +946,11 @@ export default function Home() {
                   {label === "Clients" && (
                     <span className="nav-count">{ws.allClients.length}</span>
                   )}
+                  {label === "Messages" && unreadMessages > 0 && (
+                    <span className="nav-count nav-unread" aria-label={`${unreadMessages} unread messages`}>
+                      {unreadMessages > 99 ? "99+" : unreadMessages}
+                    </span>
+                  )}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}
@@ -1391,6 +1401,14 @@ export default function Home() {
               <ClientsView {...props} />
             ) : view === "People" ? (
               <PeopleView {...props} />
+            ) : view === "Messages" ? (
+              <MessagesView
+                ws={ws}
+                openTeam={() => {
+                  navigate("Settings");
+                  window.history.replaceState(null, "", "/#settings-team");
+                }}
+              />
             ) : view === "Actions" ? (
               <ActionsView {...props} />
             ) : view === "Saved work" ? (
@@ -1416,11 +1434,13 @@ export default function Home() {
         </section>
       </main>
       <Beacon enabled={assistant.magic.beacon} ask={(q) => tryAsk(q)} />
+      <EchoAnywhere enabled={assistant.magic.echo} lang={assistant.meeting.language} />
       <QuickAssistant
         ws={ws}
         open={quickOpen}
         onClose={() => setQuickOpen(false)}
         echo={assistant.magic.echo}
+        tab={assistant.magic.tab}
         lang={assistant.meeting.language}
         ready={!busy && !uploading}
         ask={(q, o) => tryAsk(q, o?.attachmentIds)}

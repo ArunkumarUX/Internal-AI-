@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import initSqlJs, { type Database as SqlDatabase, type SqlValue } from "sql.js";
-import { del, get, put } from "@vercel/blob";
+import { BlobPreconditionFailedError, del, get, put } from "@vercel/blob";
 
 const DB_BLOB = "internal-ai/workspace.sqlite";
 const FILE_PREFIX = "internal-ai/files/";
@@ -46,9 +46,55 @@ const MIGRATIONS = [
   );`,
   `ALTER TABLE documents ADD COLUMN sha256 text DEFAULT '' NOT NULL;`,
   `CREATE INDEX IF NOT EXISTS documents_user_sha256 ON documents (user_id, sha256);`,
+  `CREATE TABLE IF NOT EXISTS members (
+    id text PRIMARY KEY NOT NULL,
+    email text NOT NULL,
+    name text NOT NULL,
+    password_hash text NOT NULL,
+    role text DEFAULT 'member' NOT NULL,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+);
+  CREATE UNIQUE INDEX IF NOT EXISTS members_email ON members (email);
+  CREATE TABLE IF NOT EXISTS conversations (
+    id text PRIMARY KEY NOT NULL,
+    kind text NOT NULL,
+    title text DEFAULT '' NOT NULL,
+    dm_key text DEFAULT '' NOT NULL,
+    created_by text NOT NULL,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+);
+  CREATE INDEX IF NOT EXISTS conversations_dm_key ON conversations (dm_key);
+  CREATE TABLE IF NOT EXISTS conversation_members (
+    conversation_id text NOT NULL,
+    user_id text NOT NULL,
+    last_read_at text DEFAULT '' NOT NULL,
+    PRIMARY KEY(conversation_id, user_id)
+);
+  CREATE INDEX IF NOT EXISTS conversation_members_user ON conversation_members (user_id);
+  CREATE TABLE IF NOT EXISTS messages (
+    id text PRIMARY KEY NOT NULL,
+    conversation_id text NOT NULL,
+    user_id text NOT NULL,
+    body text NOT NULL,
+    created_at text NOT NULL
+);
+  CREATE INDEX IF NOT EXISTS messages_conversation_created ON messages (conversation_id, created_at);`,
+  `CREATE TABLE IF NOT EXISTS login_codes (
+    email text PRIMARY KEY NOT NULL,
+    code_hash text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    expires_at text NOT NULL,
+    sent_at text NOT NULL
+);
+  CREATE TABLE IF NOT EXISTS auth_throttle (
+    key text PRIMARY KEY NOT NULL,
+    window_start text NOT NULL,
+    count integer DEFAULT 0 NOT NULL
+);`,
 ];
 
-let sqlReady: Promise<SqlDatabase> | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 
 function exclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -69,17 +115,62 @@ function wasmBinary(): ArrayBuffer {
   return asArrayBuffer(new Uint8Array(readFileSync(wasmPath)));
 }
 
-async function openDb(): Promise<SqlDatabase> {
-  if (!sqlReady) sqlReady = loadDb();
-  return sqlReady;
+/*
+ * The whole database lives in one Blob. Several server instances can hold a
+ * copy, so each copy remembers the Blob's ETag: reads re-check it every
+ * FRESH_MS, and writes only land if the ETag still matches (otherwise the
+ * write is replayed on the newer copy). Without a Blob token the database is
+ * in memory only.
+ */
+const FRESH_MS = 1500;
+const WRITE_ATTEMPTS = 6;
+let sqlModule: ReturnType<typeof initSqlJs> | null = null;
+let current: SqlDatabase | null = null;
+let etag = "";
+let checkedAt = 0;
+
+/** Development only: keep the database in a file so it survives server reloads. */
+function localFile() {
+  const file = process.env.LOCAL_DB_FILE?.trim();
+  return file && process.env.NODE_ENV !== "production" ? path.resolve(file) : "";
 }
 
-async function loadDb(): Promise<SqlDatabase> {
-  const SQL = await initSqlJs({ wasmBinary: wasmBinary() });
-  const existing = await readBlobBytes(DB_BLOB);
-  const db = existing ? new SQL.Database(existing) : new SQL.Database();
-  migrate(db);
-  return db;
+async function sql() {
+  if (!sqlModule) sqlModule = initSqlJs({ wasmBinary: wasmBinary() });
+  return sqlModule;
+}
+
+function replace(next: SqlDatabase, nextEtag: string) {
+  current?.close();
+  current = next;
+  etag = nextEtag;
+  migrate(next);
+}
+
+/** Loads the Blob when it changed since our copy (a 304 costs no download). */
+async function refresh(force = false): Promise<SqlDatabase> {
+  const SQL = await sql();
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    const file = localFile();
+    const stamp = file && existsSync(file) ? String(statSync(file).mtimeMs) : "";
+    if (!current || stamp !== etag) replace(new SQL.Database(stamp ? readFileSync(file) : undefined), stamp);
+    return current!;
+  }
+  if (current && !force && Date.now() - checkedAt < FRESH_MS) return current;
+  const result = await get(DB_BLOB, {
+    access: "private",
+    useCache: false,
+    ...(current && etag ? { ifNoneMatch: etag } : {}),
+  });
+  checkedAt = Date.now();
+  if (!result) {
+    // No Blob yet: start empty; the first write creates it.
+    if (!current || etag) replace(new SQL.Database(), "");
+  } else if (result.statusCode === 200) {
+    const bytes = new Uint8Array(await new Response(result.stream).arrayBuffer());
+    replace(new SQL.Database(bytes), result.blob.etag);
+  }
+  return current!;
 }
 
 function migrate(db: SqlDatabase) {
@@ -93,14 +184,45 @@ function migrate(db: SqlDatabase) {
   }
 }
 
-async function persist(db: SqlDatabase) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return;
-  await put(DB_BLOB, Buffer.from(db.export()), {
-    access: "private",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: "application/vnd.sqlite3",
-  });
+function conflict(error: unknown) {
+  return error instanceof BlobPreconditionFailedError || (error instanceof Error && /already exists|precondition/i.test(error.message));
+}
+
+/** Applies a write to the latest copy and saves it only if nobody saved first. */
+async function write<T>(apply: (db: SqlDatabase) => T): Promise<T> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    const db = await refresh();
+    const result = apply(db);
+    const file = localFile();
+    if (file) {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, db.export());
+      etag = String(statSync(file).mtimeMs);
+    }
+    return result;
+  }
+  for (let attempt = 1; ; attempt++) {
+    const db = await refresh(true);
+    const result = apply(db);
+    try {
+      const saved = await put(DB_BLOB, Buffer.from(db.export()), {
+        access: "private",
+        addRandomSuffix: false,
+        contentType: "application/vnd.sqlite3",
+        ...(etag ? { allowOverwrite: true, ifMatch: etag } : { allowOverwrite: false }),
+      });
+      etag = saved.etag;
+      checkedAt = Date.now();
+      return result;
+    } catch (error) {
+      // Our copy now holds an unsaved change: always reload before retrying.
+      etag = "";
+      current?.close();
+      current = null;
+      if (!conflict(error) || attempt >= WRITE_ATTEMPTS) throw error;
+      await new Promise((r) => setTimeout(r, 40 * attempt + Math.random() * 60));
+    }
+  }
 }
 
 function bindValues(values: unknown[]): SqlValue[] {
@@ -123,7 +245,7 @@ function statement(sql: string) {
     },
     async all<T = Record<string, unknown>>() {
       return exclusive(async () => {
-        const db = await openDb();
+        const db = await refresh();
         const stmt = db.prepare(sql);
         try {
           if (bound.length) stmt.bind(bound);
@@ -144,10 +266,10 @@ function statement(sql: string) {
     },
     async run() {
       return exclusive(async () => {
-        const db = await openDb();
-        db.run(sql, bound.length ? bound : undefined);
-        const changes = db.getRowsModified();
-        await persist(db);
+        const changes = await write((db) => {
+          db.run(sql, bound.length ? bound : undefined);
+          return db.getRowsModified();
+        });
         return { success: true, meta: { changes, duration: 0 } };
       });
     },

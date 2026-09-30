@@ -33,6 +33,22 @@ Later migrations (`0001`–`0003`) are applied the same way with their file name
 
 The cookie-only local sign-in runs only under the Vite dev server (or with `SITES_DEV_AUTH=1` outside production), and the local mock strips any `oai-*` identity headers sent by the browser. Set `APP_ORIGIN` when the public origin differs from the request origin (used for the Notion OAuth redirect).
 
+## Sign-in, team accounts and messaging (Vercel)
+
+Everyone signs in with a one-time code emailed to them. There are no passwords.
+
+- `AUTH_EMAIL`: the workspace admin. The admin keeps the original workspace, so existing data stays theirs. Optional `AUTH_NAME` sets the admin's display name.
+- `AUTH_SECRET` (required): signs session cookies and sign-in codes. Use a long random value (`openssl rand -hex 32`). Changing it signs everyone out.
+- SMTP for the emails: `SMTP_HOST`, `SMTP_PORT` (587 STARTTLS, or 465 with `SMTP_SECURE=true`), `SMTP_USER`, `SMTP_PASS` and `SMTP_FROM` (e.g. `Internal AI <no-reply@company.com>`). Without SMTP, production refuses to send codes; development prints the code in the server log instead.
+- Codes are 6 digits, stored only as a keyed hash, single-use, expire after 10 minutes and allow 5 wrong guesses. A new code can be requested after 60 seconds. Sending is limited to 5 per email and 20 per network address per hour; checking to 15 per email and 30 per address per hour. Responses and timing don't reveal whether an email belongs to the team.
+- The admin adds teammates (name and email) in **Settings → Team** and can remove them, which ends their access immediately. Each teammate gets a private workspace and can message anyone on the team from **Messages** (direct messages and groups, unread badges, "Seen").
+- `oai-*` identity headers are ignored whenever cookie sessions are in use, so a browser can't claim another user's identity.
+- The Blob-backed database uses conditional writes (ETag `ifMatch`), so concurrent writes from several server instances retry instead of overwriting each other. Reads re-check for a newer copy every 1.5 seconds.
+
+Local development with `next dev --webpack -p 3100`: put overrides in `.env.development.local` (gitignored). Blank `BLOB_READ_WRITE_TOKEN` so development never touches production data, set `SITES_DEV_AUTH=1` and `AUTH_SECRET`, and optionally set `LOCAL_DB_FILE=.wrangler/state/dev-workspace.sqlite` to keep data across reloads. Browse on `http://localhost:3100` (not `127.0.0.1`) so the same-origin check passes.
+
+Migrations `0004_team_messaging.sql` (team and messages) and `0005_login_codes.sql` (sign-in codes and rate limits) are for the D1 build; the Vercel runtime applies them automatically.
+
 ## Live AI configuration
 
 Configure server-side runtime values:

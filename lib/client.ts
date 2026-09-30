@@ -19,7 +19,7 @@ export type WorkspaceState = {
   records: WorkRecord[];
   documents: Record<string, any>[];
   audit: Record<string, any>[];
-  user: { displayName: string; email: string; userId: string } | null;
+  user: { displayName: string; email: string; userId: string; role?: "admin" | "member" } | null;
   aiConfigured: boolean;
   aiModel: string;
   aiFastModel: string;

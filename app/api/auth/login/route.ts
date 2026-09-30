@@ -1,51 +1,30 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { EMAIL_COOKIE, SESSION_COOKIE, SESSION_USER } from "@/lib/auth-session";
+import { SESSION_COOKIE } from "@/lib/auth-session";
+import { createSession, SESSION_MAX_AGE } from "@/lib/accounts";
+import { clientAddress, verifyCode } from "@/lib/login-codes";
+import { failure, log, ApiError } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
 
+/** Step 2: exchange the emailed code for a session. */
 export async function POST(request: NextRequest) {
-  const expectedEmail = process.env.AUTH_EMAIL?.trim().toLowerCase() ?? "";
-  const expectedPassword = process.env.AUTH_PASSWORD ?? "";
-  if (!expectedEmail || !expectedPassword) {
-    return NextResponse.json(
-      { error: "Sign-in isn’t configured for this instance. Ask an admin to set workspace access." },
-      { status: 503 },
-    );
+  try {
+    const body = (await request.json().catch(() => null)) as { email?: unknown; code?: unknown } | null;
+    const email = typeof body?.email === "string" ? body.email : "";
+    const code = typeof body?.code === "string" ? body.code : "";
+    if (!email || !code) throw new ApiError("Enter the 6-digit code from your email.");
+    const account = await verifyCode(email, code, clientAddress(request));
+    await log(account.id, "Signed in", "Email code").catch(() => {});
+    const response = NextResponse.json({ ok: true });
+    response.cookies.set(SESSION_COOKIE, createSession(account.id), {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.VERCEL === "1",
+      maxAge: SESSION_MAX_AGE,
+    });
+    return response;
+  } catch (e) {
+    return failure(e);
   }
-  const parsed = (await request.json().catch(() => null)) as {
-    email?: unknown;
-    password?: unknown;
-  } | null;
-  const email = typeof parsed?.email === "string" ? parsed.email.trim().toLowerCase() : "";
-  const password = typeof parsed?.password === "string" ? parsed.password : "";
-  if (!email || !password || !same(email, expectedEmail) || !same(password, expectedPassword)) {
-    return NextResponse.json(
-      { error: "Those details didn’t match. Check your email and password, then try again." },
-      { status: 401 },
-    );
-  }
-  const response = NextResponse.json({ ok: true });
-  const secure = process.env.VERCEL === "1";
-  response.cookies.set(SESSION_COOKIE, SESSION_USER, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    secure,
-    maxAge: 60 * 60 * 24 * 30,
-  });
-  response.cookies.set(EMAIL_COOKIE, email, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    secure,
-    maxAge: 60 * 60 * 24 * 30,
-  });
-  return response;
-}
-
-function same(left: string, right: string) {
-  const a = createHash("sha256").update(left).digest();
-  const b = createHash("sha256").update(right).digest();
-  return timingSafeEqual(a, b);
 }
