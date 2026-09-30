@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth-session";
 import { adminAccount, createSession, normaliseEmail, same, SESSION_MAX_AGE, type Account } from "@/lib/accounts";
-import { passwordFallback } from "@/lib/mailer";
+import { passwordSignInAllowed } from "@/lib/mailer";
 import { clientAddress, verifyCode, verifyThrottle } from "@/lib/login-codes";
 import { failure, log, ApiError } from "@/lib/server";
 
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       if (!email || !code) throw new ApiError("Enter the 6-digit code from your email.");
       account = await verifyCode(email, code, clientAddress(request));
     }
-    await log(account.id, "Signed in", password ? "Admin password (email not set up)" : "Email code").catch(() => {});
+    await log(account.id, "Signed in", password ? "Admin password (email unavailable)" : "Email code").catch(() => {});
     const response = NextResponse.json({ ok: true });
     response.cookies.set(SESSION_COOKIE, createSession(account.id), {
       httpOnly: true,
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
 
 /** Temporary admin-only password sign-in while SMTP isn't configured. */
 async function adminPassword(email: string, password: string, request: Request): Promise<Account> {
-  if (!passwordFallback()) throw new ApiError("Sign in with the code sent to your email.", 400);
+  if (!(await passwordSignInAllowed())) throw new ApiError("Sign in with the code sent to your email.", 400);
   // Reuse the code-check rate limits so the password can't be guessed quickly.
   await verifyThrottle(email, clientAddress(request));
   const admin = adminAccount();

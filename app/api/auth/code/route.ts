@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAccount, allowedDomains, EMAIL_PATTERN, secret } from "@/lib/accounts";
 import { clientAddress, requestCode } from "@/lib/login-codes";
 import { failure, ApiError } from "@/lib/server";
-import { passwordFallback } from "@/lib/mailer";
+import { passwordFallback, passwordSignInAllowed } from "@/lib/mailer";
 
 export const dynamic = "force-dynamic";
 
@@ -23,8 +23,20 @@ export async function POST(request: NextRequest) {
     // No email yet: send the admin to the password step instead of pretending a code went out.
     if (passwordFallback())
       throw new ApiError("Email sign-in isn’t set up yet. The workspace admin can sign in with their password.", 503, "use_password");
-    const { wait } = await requestCode(email, clientAddress(request));
-    return NextResponse.json({ ok: true, wait });
+    try {
+      const { wait } = await requestCode(email, clientAddress(request));
+      return NextResponse.json({ ok: true, wait });
+    } catch (error) {
+      // Email is failing: the admin can still get in with their password.
+      if (error instanceof ApiError && error.code === "use_password" && (await passwordSignInAllowed()))
+        throw new ApiError(
+          "We couldn’t send the email just now. The workspace admin can sign in with their password meanwhile.",
+          503,
+          "use_password",
+        );
+      if (error instanceof ApiError && error.code === "use_password") throw new ApiError(error.message, 503);
+      throw error;
+    }
   } catch (e) {
     return failure(e);
   }

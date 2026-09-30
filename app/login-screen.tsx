@@ -103,7 +103,11 @@ export function LoginScreen({
       if (!ok && data.code === "use_password") {
         // Email isn't set up on this workspace yet: the admin signs in with their password.
         setStep("password");
-        setNotice("Email sign-in isn’t set up yet. The workspace admin can sign in with their password.");
+        setNotice(
+          typeof data.error === "string"
+            ? data.error
+            : "Email sign-in isn’t available right now. The workspace admin can sign in with their password.",
+        );
         requestAnimationFrame(() => passwordRef.current?.focus());
         return;
       }

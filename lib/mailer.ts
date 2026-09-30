@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/server";
+import { database, ApiError } from "@/lib/server";
 
 /*
  * Sign-in codes are emailed through one of:
@@ -37,6 +37,38 @@ export function mailConfigured() {
  */
 export function passwordFallback() {
   return process.env.NODE_ENV === "production" && !mailConfigured() && !!process.env.AUTH_PASSWORD;
+}
+
+/*
+ * If sending fails in production, the admin may sign in with AUTH_PASSWORD
+ * for MAIL_DOWN_MINUTES after the last failure, so a broken mailbox can't
+ * lock everyone out. The first successful send switches it off again.
+ */
+const MAIL_DOWN_KEY = "mail:down";
+const MAIL_DOWN_MINUTES = 30;
+
+async function markMail(working: boolean) {
+  const db = database();
+  if (working) await db.prepare("DELETE FROM auth_throttle WHERE key=?").bind(MAIL_DOWN_KEY).run();
+  else
+    await db
+      .prepare(
+        "INSERT INTO auth_throttle (key,window_start,count) VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET window_start=excluded.window_start, count=count+1",
+      )
+      .bind(MAIL_DOWN_KEY, new Date().toISOString())
+      .run();
+}
+
+/** True when the admin may use their password: email isn't set up, or recently failed. */
+export async function passwordSignInAllowed() {
+  if (passwordFallback()) return true;
+  if (process.env.NODE_ENV !== "production" || !process.env.AUTH_PASSWORD) return false;
+  const row = await database()
+    .prepare("SELECT window_start FROM auth_throttle WHERE key=?")
+    .bind(MAIL_DOWN_KEY)
+    .first<{ window_start: string }>()
+    .catch(() => null);
+  return !!row && Date.now() - Date.parse(row.window_start) < MAIL_DOWN_MINUTES * 60 * 1000;
 }
 
 /** The sender as "Name <address>", and the bare address. */
@@ -168,13 +200,19 @@ export async function sendLoginCode(to: string, name: string, code: string, minu
   try {
     if (graphConfigured()) await sendWithGraph(to, subject, html);
     else await (await smtp()).sendMail({ from, to, subject, text, html });
+    await markMail(true).catch(() => {});
   } catch (error) {
     if (error instanceof ApiError) throw error;
     transport = null; // rebuild the connection next time
+    await markMail(false).catch(() => {});
     console.error(
       `[auth] Couldn’t send sign-in email via ${graphConfigured() ? "Microsoft Graph" : "SMTP"}:`,
       error instanceof Error ? error.message : error,
     );
-    throw new ApiError("We couldn’t send the email just now. Please try again in a minute.", 503);
+    throw new ApiError(
+      "We couldn’t send the email just now. Please try again in a minute.",
+      503,
+      process.env.AUTH_PASSWORD && process.env.NODE_ENV === "production" ? "use_password" : "email_failed",
+    );
   }
 }
