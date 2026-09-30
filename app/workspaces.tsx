@@ -90,6 +90,7 @@ import {
 } from "@/lib/knowledge";
 import { api, downloadText, initialsOf, type Workspace } from "@/lib/client";
 import { TeamSettings } from "./messages";
+import { LocalFiles } from "./desktop";
 type Props = {
   ws: Workspace;
   ask: (q: string, options?: { attachmentIds?: string[] }) => void;
@@ -249,6 +250,7 @@ export function Knowledge({ ws, openSource, ask, upload }: Props) {
           Upload document
         </button>
       </PageTitle>
+      <LocalFiles ws={ws} onDownload={() => (window.location.hash = "download")} />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="library">Library</TabsTrigger>

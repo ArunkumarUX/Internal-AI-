@@ -1,0 +1,60 @@
+/* Desktop app window chrome: macOS draws the window buttons over the top-left
+   corner, and the top bar doubles as the window's drag handle. */
+[data-desktop="darwin"] [data-sidebar="header"] { padding-top: 38px; }
+[data-desktop] .topbar { -webkit-app-region: drag; user-select: none; }
+[data-desktop] .topbar button,
+[data-desktop] .topbar a,
+[data-desktop] .topbar input,
+[data-desktop] .topbar [role="status"],
+[data-desktop] .topbar .history-menu { -webkit-app-region: no-drag; }
+
+/* Get the app */
+.download-app-button span { white-space: nowrap; }
+@media (max-width: 900px) { .download-app-button span { display: none; } }
+.download-dialog { max-width: 480px; }
+.download-loading { display: flex; align-items: center; gap: 8px; color: var(--kit-muted); font-size: 14px; }
+.download-primary {
+  display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+  min-height: 48px; margin-top: 4px; font-size: 15px; text-decoration: none;
+}
+.download-primary small { font-weight: 500; opacity: 0.75; }
+.download-others { display: grid; gap: 4px; margin-top: 4px; }
+.download-others > span { font-size: 12px; font-weight: 600; color: var(--kit-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.download-others a {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px;
+  color: var(--kit-ink); font-size: 14px; text-decoration: none;
+}
+.download-others a:hover { background: var(--kit-indigo-wash); }
+.download-others small { margin-left: auto; color: var(--kit-muted); }
+.download-steps { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13.5px; line-height: 1.5; color: var(--kit-muted); }
+.download-steps strong { color: var(--kit-ink); }
+.download-meta { margin: 4px 0 0; font-size: 12px; color: var(--kit-muted); }
+
+/* Files on this computer */
+.local-files {
+  margin-bottom: 18px; padding: 16px 18px; border: 1px solid var(--kit-border); border-radius: 14px; background: #fff;
+}
+.local-files > header { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.local-files h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 600; }
+.local-files h3 svg { color: var(--kit-indigo); }
+.local-files header p { margin: 4px 0 0; max-width: 560px; font-size: 13.5px; line-height: 1.5; color: var(--kit-muted); }
+.local-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.local-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.local-folders { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 2px; border-top: 1px solid var(--kit-border); }
+.local-folders li { display: flex; align-items: center; gap: 12px; padding: 10px 2px; border-bottom: 1px solid var(--kit-border); }
+.local-folders li:last-child { border-bottom: 0; }
+.local-status { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0; }
+.local-status.idle { color: #1f7a4d; background: #e7f5ee; }
+.local-status.syncing { color: var(--kit-indigo); background: var(--kit-indigo-soft); }
+.local-status.warning, .local-status.error { color: #a15c00; background: #fff4e0; }
+.local-folder-text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.local-folder-text strong { font-size: 14px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-folder-text small { font-size: 12.5px; color: var(--kit-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-message { color: #a15c00 !important; white-space: normal !important; }
+.local-confirm { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.local-files-promo { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--kit-indigo-wash); }
+.local-files-promo > svg { color: var(--kit-indigo); flex-shrink: 0; }
+.local-files-promo > div { flex: 1; min-width: 220px; }
+.local-files-promo strong { font-size: 14px; }
+.local-files-promo p { margin: 2px 0 0; font-size: 13px; color: var(--kit-muted); }
+.local-files-promo button { display: inline-flex; align-items: center; gap: 6px; }

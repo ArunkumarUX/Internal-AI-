@@ -5,18 +5,21 @@ const {
   app,
   BrowserWindow,
   Menu,
+  MenuItem,
   screen,
   Tray,
   desktopCapturer,
   globalShortcut,
   ipcMain,
   nativeImage,
+  Notification,
   session,
   shell,
   systemPreferences,
 } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const localFiles = require("./local-files");
 
 const APP_URL = new URL(process.env.INTERNAL_AI_URL || "https://internal-ai.vercel.app");
 const ORIGIN = APP_URL.origin;
@@ -26,6 +29,7 @@ const isMac = process.platform === "darwin";
 let win = null;
 let tray = null;
 let quitting = false;
+let local = null;
 
 /* ---------------------------------------------------------------- */
 /* Window state                                                       */
@@ -118,6 +122,7 @@ function createWindow() {
     win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
   });
 
+  win.on("focus", () => local?.onFocus());
   win.on("resize", saveState);
   win.on("move", saveState);
   // Closing the window keeps the app (and the shortcut) running, like Claude's app.
@@ -276,6 +281,46 @@ ipcMain.on("desktop:focus", (event) => {
 });
 
 /* ---------------------------------------------------------------- */
+/* Updates                                                            */
+/* ---------------------------------------------------------------- */
+
+const newer = (a, b) => {
+  const pa = String(a).split(".").map(Number);
+  const pb = String(b).split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+};
+let announced = "";
+
+/** Asks the workspace for the latest desktop version and offers the download. */
+async function checkForUpdate() {
+  try {
+    const response = await session.defaultSession.fetch(`${ORIGIN}/api/desktop`, { headers: { Origin: ORIGIN } });
+    if (!response.ok) return;
+    const latest = await response.json();
+    if (!latest.version || !newer(latest.version, app.getVersion()) || announced === latest.version) return;
+    announced = latest.version;
+    const open = () => openExternal(`${ORIGIN}/#download`);
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title: "Internal AI update available",
+        body: `Version ${latest.version} is ready. Click to download it.`,
+      });
+      n.on("click", open);
+      n.show();
+    }
+    updateMenu(latest.version, open);
+  } catch {}
+}
+
+function updateMenu(version, open) {
+  const menu = Menu.getApplicationMenu();
+  const help = menu?.items.find((item) => item.role === "help");
+  if (!help || help.submenu.items.some((item) => item.id === "update")) return;
+  help.submenu.append(new MenuItem({ id: "update", label: `Download version ${version}…`, click: open }));
+}
+
+/* ---------------------------------------------------------------- */
 /* Lifecycle                                                          */
 /* ---------------------------------------------------------------- */
 
@@ -291,6 +336,9 @@ if (!app.requestSingleInstanceLock()) {
     createMenu();
     createWindow();
     createTray();
+    local = localFiles.create({ origin: ORIGIN, getWindow: () => win });
+    setTimeout(checkForUpdate, 15_000);
+    setInterval(checkForUpdate, 6 * 60 * 60 * 1000);
     if (!globalShortcut.register(QUICK_SHORTCUT, quickAsk))
       console.warn(`The ${QUICK_SHORTCUT} shortcut is taken by another app.`);
     // Ask for the microphone up front on macOS so Echo works on first use.

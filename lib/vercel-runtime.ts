@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import initSqlJs, { type Database as SqlDatabase, type SqlValue } from "sql.js";
 import { BlobPreconditionFailedError, del, get, put } from "@vercel/blob";
@@ -314,6 +314,13 @@ async function readBlobBytes(pathname: string): Promise<Uint8Array | null> {
   }
 }
 
+/** Development only: uploaded originals go next to LOCAL_DB_FILE when there's no Blob token. */
+function localFilesDir() {
+  const db = localFile();
+  return db ? path.join(path.dirname(db), "dev-files") : "";
+}
+const localFileName = (key: string) => key.replace(/[^A-Za-z0-9._-]/g, "_");
+
 export function vercelR2() {
   return {
     async put(
@@ -323,7 +330,11 @@ export function vercelR2() {
     ) {
       const bytes = await toBytes(value);
       if (!process.env.BLOB_READ_WRITE_TOKEN) {
-        throw new Error("Document storage is unavailable.");
+        const dir = localFilesDir();
+        if (!dir) throw new Error("Document storage is unavailable.");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(path.join(dir, localFileName(key)), bytes);
+        return { key };
       }
       await put(filePath(key), bytes, {
         access: "private",
@@ -334,7 +345,13 @@ export function vercelR2() {
       return { key };
     },
     async get(key: string) {
-      const bytes = await readBlobBytes(filePath(key));
+      const dir = !process.env.BLOB_READ_WRITE_TOKEN && localFilesDir();
+      const local = dir ? path.join(dir, localFileName(key)) : "";
+      const bytes = local
+        ? existsSync(local)
+          ? new Uint8Array(readFileSync(local))
+          : null
+        : await readBlobBytes(filePath(key));
       if (!bytes) return null;
       const copy = bytes;
       return {
@@ -344,7 +361,11 @@ export function vercelR2() {
       };
     },
     async delete(key: string) {
-      if (!process.env.BLOB_READ_WRITE_TOKEN) return;
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        const dir = localFilesDir();
+        if (dir) rmSync(path.join(dir, localFileName(key)), { force: true });
+        return;
+      }
       await del(filePath(key)).catch(() => {});
     },
   };

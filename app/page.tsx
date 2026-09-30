@@ -104,6 +104,7 @@ import { LoginScreen, LoginSplash } from "./login-screen";
 import { Intelligence } from "./intelligence";
 import { ChatExchange, type ChatMessage } from "./chat";
 import { MessagesView, desktopApp, useUnreadMessages } from "./messages";
+import { DownloadAppButton, DownloadAppDialog, useDesktopChrome } from "./desktop";
 import {
   AgentSkills,
   MeetingAssistant,
@@ -241,6 +242,22 @@ export default function Home() {
   const { prefs: assistant } = useAssistantPrefs(ws);
   const completions = useCompletions(ws);
   const unreadMessages = useUnreadMessages(!!ws.state.user, view === "Messages");
+  useDesktopChrome();
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  // "#download" (e.g. from the desktop app's update notice) opens the download
+  // window once signed in; the link survives the sign-in screen.
+  const signedInForDownload = !!ws.state.user;
+  useEffect(() => {
+    if (!signedInForDownload) return;
+    const check = () => {
+      if (window.location.hash !== "#download") return;
+      setDownloadOpen(true);
+      window.history.replaceState(null, "", window.location.pathname);
+    };
+    check();
+    window.addEventListener("hashchange", check);
+    return () => window.removeEventListener("hashchange", check);
+  }, [signedInForDownload]);
   useJobScheduler(ws, !!assistant.skills.jobs);
   const [caretAtEnd, setCaretAtEnd] = useState(true);
   const suggestion = assistant.magic.tab && caretAtEnd
@@ -325,6 +342,7 @@ export default function Home() {
   useEffect(() => {
     const sync = () => {
       const page = decodeURIComponent(window.location.hash.slice(1));
+      if (page === "download") return; // opens the download window, not a page
       const match = page.startsWith("settings")
         ? "Settings"
         : sections.find((x) => x.toLowerCase().replaceAll(" ", "-") === page);
@@ -1147,6 +1165,7 @@ export default function Home() {
                 </div>
               )}
             </div>
+            <DownloadAppButton onOpen={() => setDownloadOpen(true)} />
             <button
               type="button"
               className="new-chat-button"
@@ -1438,6 +1457,7 @@ export default function Home() {
           <MeetingAssistant ws={ws} ask={(q) => tryAsk(q)} onRecording={setMeetingLive} stopSignal={stopMeeting} />
         </section>
       </main>
+      <DownloadAppDialog open={downloadOpen} onOpenChange={setDownloadOpen} />
       <Beacon enabled={assistant.magic.beacon} ask={(q) => tryAsk(q)} />
       <EchoAnywhere enabled={assistant.magic.echo} lang={assistant.meeting.language} />
       <QuickAssistant
