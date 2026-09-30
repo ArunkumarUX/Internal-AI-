@@ -103,7 +103,7 @@ import { UploadSheet } from "./upload-sheet";
 import { LoginScreen, LoginSplash } from "./login-screen";
 import { Intelligence } from "./intelligence";
 import { ChatExchange, type ChatMessage } from "./chat";
-import { MessagesView, useUnreadMessages } from "./messages";
+import { MessagesView, desktopApp, useUnreadMessages } from "./messages";
 import {
   AgentSkills,
   MeetingAssistant,
@@ -276,7 +276,12 @@ export default function Home() {
       }
     };
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    // Desktop app: ⌥Space from anywhere on the computer opens the quick assistant.
+    const stopQuickAsk = desktopApp()?.onQuickAsk(() => setQuickOpen(true));
+    return () => {
+      window.removeEventListener("keydown", key);
+      stopQuickAsk?.();
+    };
   }, []);
   useEffect(() => {
     if (preferences?.evidence !== undefined)

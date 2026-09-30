@@ -2159,7 +2159,7 @@ const SLIDES: Slide[] = [
       [Monitor, "Everywhere in the app", "Brings your selection along"],
       [ShieldCheck, "Your permission", "Screen access asks every time"],
     ],
-    quota: "Browsers can’t add shortcuts outside this tab. A native desktop companion would be needed for system-wide use.",
+    quota: "In the browser, ⌘J works inside this tab. In the Internal AI desktop app, ⌥Space opens it from any app on your computer.",
   },
 ];
 

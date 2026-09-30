@@ -65,6 +65,18 @@ function useInbox() {
   return { data, error };
 }
 
+/** The bridge the Internal AI desktop app adds to the page (see desktop/preload.js). */
+type DesktopBridge = {
+  isDesktop: true;
+  platform: string;
+  onQuickAsk: (callback: () => void) => () => void;
+  setUnread: (count: number) => void;
+  focus: () => void;
+};
+export function desktopApp(): DesktopBridge | null {
+  return typeof window === "undefined" ? null : ((window as { internalAIDesktop?: DesktopBridge }).internalAIDesktop ?? null);
+}
+
 /** Unread message count for the sidebar, refreshed in the background. */
 export function useUnreadMessages(signedIn: boolean, onMessagesPage: boolean) {
   const { data } = useInbox();
@@ -73,12 +85,56 @@ export function useUnreadMessages(signedIn: boolean, onMessagesPage: boolean) {
     void refreshInbox();
     // The Messages page polls faster on its own.
     if (onMessagesPage) return;
+    const desktop = !!desktopApp();
     const t = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refreshInbox();
+      // The desktop app keeps checking in the background so it can notify.
+      if (desktop || document.visibilityState === "visible") void refreshInbox();
     }, BADGE_POLL_MS);
     return () => window.clearInterval(t);
   }, [signedIn, onMessagesPage]);
-  return signedIn ? (data?.unread ?? 0) : 0;
+  const unread = signedIn ? (data?.unread ?? 0) : 0;
+  useDesktopNotifications(data, unread, onMessagesPage);
+  return unread;
+}
+
+/**
+ * In the desktop app: show the unread count on the Dock icon, and a native
+ * notification when a new message arrives while you're elsewhere.
+ */
+function useDesktopNotifications(data: Inbox | null, unread: number, onMessagesPage: boolean) {
+  const seen = useRef<Map<string, string> | null>(null);
+  useEffect(() => {
+    desktopApp()?.setUnread(unread);
+  }, [unread]);
+  useEffect(() => {
+    const desktop = desktopApp();
+    if (!desktop || !data) return;
+    const latest = new Map(data.conversations.map((c) => [c.id, c.last?.at ?? ""]));
+    const before = seen.current;
+    seen.current = latest;
+    if (!before) return; // first load: don't announce old messages
+    const looking = onMessagesPage && document.visibilityState === "visible" && document.hasFocus();
+    if (looking || typeof Notification === "undefined") return;
+    const names = new Map(data.people.map((p) => [p.id, p.name]));
+    for (const c of data.conversations) {
+      if (!c.last || c.last.userId === data.me || !c.unread) continue;
+      if ((before.get(c.id) ?? "") >= c.last.at) continue;
+      const sender = names.get(c.last.userId) ?? "Someone on your team";
+      const show = () => {
+        const n = new Notification(c.kind === "group" && c.title ? `${sender} · ${c.title}` : sender, {
+          body: c.last!.body.slice(0, 140),
+          tag: `message-${c.id}`,
+          silent: false,
+        });
+        n.onclick = () => {
+          desktop.focus();
+          window.location.hash = "messages";
+        };
+      };
+      if (Notification.permission === "granted") show();
+      else if (Notification.permission !== "denied") void Notification.requestPermission().then((p) => p === "granted" && show());
+    }
+  }, [data, onMessagesPage]);
 }
 
 /* ------------------------------------------------------------------ */
