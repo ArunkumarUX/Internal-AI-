@@ -127,7 +127,9 @@ export function DownloadAppDialog({ open, onOpenChange }: { open: boolean; onOpe
                 <>
                   <li>Open the downloaded file and drag Internal AI into Applications.</li>
                   <li>
-                    The first time, right-click Internal AI in Applications and choose <strong>Open</strong>.
+                    Open Internal AI. If macOS says it can’t verify the app, go to{" "}
+                    <strong>System Settings → Privacy &amp; Security</strong>, scroll down and click{" "}
+                    <strong>Open Anyway</strong>. You only do this once.
                   </li>
                   <li>Sign in with your work email. Press ⌥ Space from any app to ask.</li>
                 </>

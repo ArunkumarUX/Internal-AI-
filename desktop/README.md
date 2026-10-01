@@ -21,7 +21,7 @@ npm run dist:mac                         # .dmg and .zip for Apple silicon and I
 npm run dist:win                         # Windows installer
 ```
 
-Builds are unsigned unless signing credentials are configured. On macOS, the first launch of an unsigned app needs right-click → Open. For wider distribution, sign and notarise with an Apple Developer ID (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
+Mac builds are ad-hoc signed (`identity: "-"`), so macOS shows "can't verify" instead of "damaged". People approve the first launch in System Settings → Privacy & Security → Open Anyway (or run `xattr -cr "/Applications/Internal AI.app"`). For wider distribution, sign and notarise with an Apple Developer ID (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
 
 ## Publish a release for the team
 

@@ -3,7 +3,8 @@ import path from "node:path";
 import initSqlJs, { type Database as SqlDatabase, type SqlValue } from "sql.js";
 import { BlobPreconditionFailedError, del, get, put } from "@vercel/blob";
 
-const DB_BLOB = "internal-ai/workspace.sqlite";
+// DB_BLOB_PATH points a test deployment at its own database file.
+const DB_BLOB = process.env.DB_BLOB_PATH?.trim() || "internal-ai/workspace.sqlite";
 const FILE_PREFIX = "internal-ai/files/";
 
 const MIGRATIONS = [
@@ -123,7 +124,7 @@ function wasmBinary(): ArrayBuffer {
  * in memory only.
  */
 const FRESH_MS = 1500;
-const WRITE_ATTEMPTS = 6;
+const WRITE_ATTEMPTS = 10;
 let sqlModule: ReturnType<typeof initSqlJs> | null = null;
 let current: SqlDatabase | null = null;
 let etag = "";
@@ -204,6 +205,9 @@ async function write<T>(apply: (db: SqlDatabase) => T): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     const db = await refresh(true);
     const result = apply(db);
+    // Nothing changed (e.g. marking something already read): no save needed.
+    const changed = Array.isArray(result) ? result.some((n) => Number(n) > 0) : Number(result) > 0;
+    if (!changed && (typeof result === "number" || Array.isArray(result))) return result;
     try {
       const saved = await put(DB_BLOB, Buffer.from(db.export()), {
         access: "private",
@@ -220,7 +224,9 @@ async function write<T>(apply: (db: SqlDatabase) => T): Promise<T> {
       current?.close();
       current = null;
       if (!conflict(error) || attempt >= WRITE_ATTEMPTS) throw error;
-      await new Promise((r) => setTimeout(r, 40 * attempt + Math.random() * 60));
+      // Exponential backoff with jitter, so competing instances stop colliding.
+      const ceiling = Math.min(1600, 60 * 2 ** attempt);
+      await new Promise((r) => setTimeout(r, ceiling / 2 + Math.random() * (ceiling / 2)));
     }
   }
 }
@@ -266,12 +272,14 @@ function statement(sql: string) {
     },
     async run() {
       return exclusive(async () => {
-        const changes = await write((db) => {
-          db.run(sql, bound.length ? bound : undefined);
-          return db.getRowsModified();
-        });
+        const changes = await write((db) => self.apply(db));
         return { success: true, meta: { changes, duration: 0 } };
       });
+    },
+    /** Runs this write on a database copy; used by run() and batch(). */
+    apply(db: SqlDatabase) {
+      db.run(sql, bound.length ? bound : undefined);
+      return db.getRowsModified();
     },
   };
   return self;
@@ -281,6 +289,13 @@ export function vercelD1() {
   return {
     prepare(sql: string) {
       return statement(sql);
+    },
+    /** Like D1's batch(): several writes saved together, in one Blob write. */
+    async batch(statements: ReturnType<typeof statement>[]) {
+      return exclusive(async () => {
+        const changes = await write((db) => statements.map((s) => s.apply(db)));
+        return changes.map((n) => ({ success: true, meta: { changes: n, duration: 0 } }));
+      });
     },
   };
 }

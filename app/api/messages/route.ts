@@ -117,17 +117,19 @@ export async function POST(request: Request) {
         if (existing) return Response.json({ id: existing.id });
       }
       const id = crypto.randomUUID();
-      await db
-        .prepare(
-          "INSERT INTO conversations (id,kind,title,dm_key,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
-        )
-        .bind(id, dmKey ? "dm" : "group", dmKey ? "" : (body.title ?? ""), dmKey, user.userId, now, now)
-        .run();
-      for (const member of participants)
-        await db
-          .prepare("INSERT OR IGNORE INTO conversation_members (conversation_id,user_id,last_read_at) VALUES (?,?,?)")
-          .bind(id, member, member === user.userId ? now : "")
-          .run();
+      // The conversation and all its members in one save, so nobody sees half of it.
+      await db.batch([
+        db
+          .prepare(
+            "INSERT INTO conversations (id,kind,title,dm_key,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+          )
+          .bind(id, dmKey ? "dm" : "group", dmKey ? "" : (body.title ?? ""), dmKey, user.userId, now, now),
+        ...participants.map((member) =>
+          db
+            .prepare("INSERT OR IGNORE INTO conversation_members (conversation_id,user_id,last_read_at) VALUES (?,?,?)")
+            .bind(id, member, member === user.userId ? now : ""),
+        ),
+      ]);
       return Response.json({ id });
     }
 
@@ -146,15 +148,16 @@ export async function POST(request: Request) {
       if (others.length && !others.some((o) => directory.has(o.user_id)))
         throw new ApiError("No one else in this conversation is on the team any more.", 409);
       const id = crypto.randomUUID();
-      await db
-        .prepare("INSERT INTO messages (id,conversation_id,user_id,body,created_at) VALUES (?,?,?,?,?)")
-        .bind(id, body.conversationId, user.userId, body.body, now)
-        .run();
-      await db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").bind(now, body.conversationId).run();
-      await db
-        .prepare("UPDATE conversation_members SET last_read_at=? WHERE conversation_id=? AND user_id=?")
-        .bind(now, body.conversationId, user.userId)
-        .run();
+      // One save for the message, the conversation's order and your read position.
+      await db.batch([
+        db
+          .prepare("INSERT INTO messages (id,conversation_id,user_id,body,created_at) VALUES (?,?,?,?,?)")
+          .bind(id, body.conversationId, user.userId, body.body, now),
+        db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").bind(now, body.conversationId),
+        db
+          .prepare("UPDATE conversation_members SET last_read_at=? WHERE conversation_id=? AND user_id=?")
+          .bind(now, body.conversationId, user.userId),
+      ]);
       return Response.json({ id, conversationId: body.conversationId, userId: user.userId, body: body.body, at: now });
     }
 
