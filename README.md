@@ -33,6 +33,20 @@ Later migrations (`0001`–`0003`) are applied the same way with their file name
 
 The cookie-only local sign-in runs only under the Vite dev server (or with `SITES_DEV_AUTH=1` outside production), and the local mock strips any `oai-*` identity headers sent by the browser. Set `APP_ORIGIN` when the public origin differs from the request origin (used for the Notion OAuth redirect).
 
+## Database on Vercel: Supabase Postgres + pgvector
+
+When `POSTGRES_URL` is set (the Vercel Supabase integration adds it), the Vercel build stores everything in Supabase Postgres (Mumbai, `bom1`; functions are pinned to the same region in `vercel.json`). Without it, the app falls back to the single SQLite file in Vercel Blob. Uploaded originals stay in Blob.
+
+- Tables live in a private schema (`PG_SCHEMA`, default `internal_ai`) that Supabase's REST API does not expose. Row-level security is on and `anon`/`authenticated` have no access; only the server connects.
+- The app uses the session pooler (port 5432) even if the URL says 6543. The transaction pooler drops replies under concurrency with postgres.js; set `PG_TRANSACTION_POOLER=1` only to override. `PG_POOL_MAX` (default 3) sets connections per instance.
+- Ask searches document passages instead of loading every document: full-text (tsvector + GIN) straight away, plus pgvector semantic search (HNSW, cosine) once the AI key allows the embedding model (`AI_EMBEDDING_MODEL`, default `text-embedding-v4`, 1024 dimensions). Results are fused by rank.
+- Moving data from Blob to Postgres (safe to repeat; it upserts and never deletes):
+
+```bash
+PG_SCHEMA=internal_ai POSTGRES_URL=... BLOB_READ_WRITE_TOKEN=... node --experimental-strip-types scripts/migrate-to-postgres.mjs
+PG_SCHEMA=internal_ai POSTGRES_URL=... node --experimental-strip-types scripts/index-documents.mjs
+```
+
 ## Sign-in, team accounts and messaging (Vercel)
 
 Everyone signs in by email, with no passwords. One click on **Email me a sign-in link** sends two emails:

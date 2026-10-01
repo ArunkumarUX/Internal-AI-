@@ -8,6 +8,7 @@ import {
 } from "@/lib/server";
 import { unzipSync, strFromU8 } from "fflate";
 import { capabilities, describeImage, gateway } from "@/lib/ai";
+import { indexDocument } from "@/lib/search";
 /** The stored type comes from the checked extension, never the client. */
 const MIME: Record<string, string> = {
   txt: "text/plain",
@@ -198,6 +199,10 @@ export async function POST(request: Request) {
       await bucket().delete(`${user.userId}/${id}`);
       throw e;
     }
+    // Searchable straight away; a search problem never fails the upload.
+    await indexDocument(user.userId, id, title, content).catch((e) =>
+      console.error("index", e instanceof Error ? e.message : e),
+    );
     await log(
       user.userId,
       "Document uploaded",

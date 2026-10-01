@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import path from "node:path";
 import initSqlJs, { type Database as SqlDatabase, type SqlValue } from "sql.js";
 import { BlobPreconditionFailedError, del, get, put } from "@vercel/blob";
+import { pgConfigured, postgresD1 } from "@/lib/postgres";
 
 // DB_BLOB_PATH points a test deployment at its own database file.
 const DB_BLOB = process.env.DB_BLOB_PATH?.trim() || "internal-ai/workspace.sqlite";
@@ -286,6 +287,12 @@ function statement(sql: string) {
 }
 
 export function vercelD1() {
+  // Supabase Postgres when it's connected; the Blob-backed SQLite file otherwise.
+  if (pgConfigured()) return postgresD1() as unknown as ReturnType<typeof blobD1>;
+  return blobD1();
+}
+
+function blobD1() {
   return {
     prepare(sql: string) {
       return statement(sql);

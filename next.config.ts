@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
   // local development looks like production.
   devIndicators: false,
   outputFileTracingRoot: root,
-  serverExternalPackages: ["sql.js"],
+  serverExternalPackages: ["sql.js", "postgres"],
   outputFileTracingIncludes: {
     "/*": ["./node_modules/sql.js/dist/sql-wasm.wasm"],
   },

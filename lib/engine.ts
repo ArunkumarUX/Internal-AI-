@@ -1,3 +1,4 @@
+import { candidateDocuments, searchAvailable } from "@/lib/search";
 import { database, saveRecord, log } from "@/lib/server";
 import { sources, searchSources, evidenceStrength, type Source } from "@/lib/knowledge";
 import { localAnswer } from "@/lib/answer";
@@ -123,7 +124,12 @@ export async function answer(
   }));
   emit("status", { step: "Searching your knowledge" });
   const [uploaded, memory] = await Promise.all([
-    database().prepare("SELECT * FROM documents WHERE user_id=?").bind(user.userId).all(),
+    // With Supabase, the database picks the best matches instead of loading every document.
+    searchAvailable()
+      ? candidateDocuments(user.userId, query, attachmentIds)
+          .then((results) => ({ results }))
+          .catch(() => database().prepare("SELECT * FROM documents WHERE user_id=?").bind(user.userId).all())
+      : database().prepare("SELECT * FROM documents WHERE user_id=?").bind(user.userId).all(),
     skills.memory
       ? database()
           .prepare("SELECT id,data,updated_at FROM records WHERE user_id=? AND kind='memory'")
