@@ -1,1 +1,2 @@
-desktop
+# Only the top-level Electron app folder; app/api/desktop must still deploy.
+/desktop
