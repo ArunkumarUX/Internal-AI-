@@ -107,9 +107,13 @@ export function DownloadAppDialog({ open, onOpenChange }: { open: boolean; onOpe
           <p className="notice">The desktop app hasn’t been published yet. Check back soon.</p>
         ) : (
           <>
-            <a className="primary-button download-primary" href={`/api/desktop/download?platform=${recommended.id}`}>
+            {recommended.id.startsWith("mac") && <MacInstallCommand platform={recommended.id} />}
+            <a
+              className={`${recommended.id.startsWith("mac") ? "secondary-button" : "primary-button"} download-primary`}
+              href={`/api/desktop/download?platform=${recommended.id}`}
+            >
               <Download size={17} />
-              Download for {recommended.label.replace(" 10 and 11", "")}
+              {recommended.id.startsWith("mac") ? "Or download the installer" : `Download for ${recommended.label.replace(" 10 and 11", "")}`}
               <small>{megabytes(recommended.size)}</small>
             </a>
             {others.length > 0 && (
@@ -151,6 +155,51 @@ export function DownloadAppDialog({ open, onOpenChange }: { open: boolean; onOpe
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The easiest Mac install until the app is notarised: a Terminal command.
+ * Files fetched by curl aren't quarantined, so macOS doesn't ask to verify it.
+ */
+function MacInstallCommand({ platform }: { platform: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "copied">("idle");
+  const [command, setCommand] = useState("");
+  async function copy() {
+    setState("busy");
+    try {
+      const data = await api(`/api/desktop/install?platform=${platform}`);
+      setCommand(data.command);
+      try {
+        await navigator.clipboard.writeText(data.command);
+        setState("copied");
+      } catch {
+        setState("idle"); // clipboard blocked: the command is shown to copy by hand
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+      setState("idle");
+    }
+  }
+  return (
+    <div className="mac-install">
+      <strong>Easiest on Mac: install with one command</strong>
+      <ol>
+        <li>Copy the install command.</li>
+        <li>
+          Open <strong>Terminal</strong> (press ⌘ Space, type “Terminal”, press Return).
+        </li>
+        <li>Paste with ⌘ V and press Return. Internal AI installs and opens, with no security prompts.</li>
+      </ol>
+      <button className="primary-button download-primary" onClick={copy} disabled={state === "busy"}>
+        {state === "busy" ? <LoaderCircle size={16} className="spin" /> : state === "copied" ? <CheckCircle2 size={16} /> : <Download size={16} />}
+        {state === "copied" ? "Copied. Now paste it into Terminal" : "Copy install command"}
+      </button>
+      {command && (
+        <textarea className="mac-install-command" readOnly value={command} rows={3} onFocus={(e) => e.currentTarget.select()} aria-label="Install command" />
+      )}
+      <small>The command contains a private download link that works for 10 minutes.</small>
+    </div>
   );
 }
 

@@ -58,3 +58,9 @@
 .local-files-promo strong { font-size: 14px; }
 .local-files-promo p { margin: 2px 0 0; font-size: 13px; color: var(--kit-muted); }
 .local-files-promo button { display: inline-flex; align-items: center; gap: 6px; }
+.mac-install { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--kit-border); border-radius: 12px; background: var(--kit-indigo-wash); }
+.mac-install > strong { font-size: 14px; }
+.mac-install ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 13.5px; line-height: 1.5; color: var(--kit-muted); }
+.mac-install ol strong { color: var(--kit-ink); }
+.mac-install small { font-size: 12px; color: var(--kit-muted); }
+.mac-install-command { width: 100%; resize: none; padding: 8px 10px; border: 1px solid var(--kit-border); border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--kit-ink); background: #fff; }
