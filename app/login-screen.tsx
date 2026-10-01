@@ -36,6 +36,58 @@ async function post(path: string, body: unknown) {
   return { ok: response.ok, status: response.status, data };
 }
 
+/** "Good morning" / "Good afternoon" / "Good evening" by the viewer's clock. */
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+}
+
+const INSPIRATION = [
+  { line: "Great work starts with a good question.", note: "Ask anything. Your team’s knowledge is ready." },
+  { line: "What one of us learns, all of us can build on.", note: "Every answer shows where it came from." },
+  { line: "Small steps every day add up to something remarkable.", note: "Pick up where you left off." },
+  { line: "Curiosity is where every breakthrough begins.", note: "Explore an idea, then make it real." },
+  { line: "Together, we know more than any of us alone.", note: "Share what you know with your colleagues." },
+];
+
+/** The welcoming side of the sign-in screen: a calm backdrop and a line of encouragement. */
+function Inspiration() {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const t = window.setInterval(() => setIndex((i) => (i + 1) % INSPIRATION.length), 7000);
+    return () => window.clearInterval(t);
+  }, []);
+  const item = INSPIRATION[index];
+  return (
+    <aside className="login-inspire" aria-label="A note for today">
+      <div className="inspire-art" aria-hidden="true">
+        <span className="inspire-orb one" />
+        <span className="inspire-orb two" />
+        <span className="inspire-orb three" />
+        <span className="inspire-words">
+          learn · share · build · grow · learn · share · build · grow · learn · share · build · grow
+        </span>
+      </div>
+      <div className="inspire-brand">
+        <span className="brand-icon" aria-hidden="true">
+          <Sparkles size={18} />
+        </span>
+        Internal AI
+      </div>
+      <figure className="inspire-quote" key={index}>
+        <blockquote>{item.line}</blockquote>
+        <figcaption>{item.note}</figcaption>
+      </figure>
+      <div className="inspire-dots" aria-hidden="true">
+        {INSPIRATION.map((_, i) => (
+          <i key={i} className={i === index ? "on" : ""} />
+        ))}
+      </div>
+    </aside>
+  );
+}
+
 export function LoginScreen({
   expired = false,
   onSignedIn,
@@ -98,16 +150,6 @@ export function LoginScreen({
       setFormError((error as Error).message);
     }
   }
-
-  const [domains, setDomains] = useState<string[]>([]);
-  useEffect(() => {
-    fetch("/api/auth/code")
-      .then((r) => (r.ok ? (r.json() as Promise<{ domains?: unknown }>) : null))
-      .then((d) => {
-        if (Array.isArray(d?.domains)) setDomains(d.domains.filter((x): x is string => typeof x === "string"));
-      })
-      .catch(() => {});
-  }, []);
 
   // A refresh while waiting for the email keeps you on the code step.
   useEffect(() => {
@@ -252,7 +294,8 @@ export function LoginScreen({
   }
 
   return (
-    <div className="login-screen">
+    <div className="login-screen login-split">
+      <Inspiration />
       <main className="login-card">
         <div className="login-brand" aria-hidden="true">
           <span className="brand-icon">{step === "code" ? <MailCheck size={22} /> : <Sparkles size={22} />}</span>
@@ -305,22 +348,10 @@ export function LoginScreen({
           </>
         ) : step === "email" ? (
           <>
-            <h1>Sign in to your workspace</h1>
+            <h1>{greeting()}, welcome back</h1>
             <p className="login-lede">
-              Enter your work email and we’ll email you a{firebaseEnabled() ? " sign-in link and a" : ""} one-time code.
-              No password needed.
-              {domains.length > 0 && (
-                <>
-                  {" "}
-                  Anyone with an {domains.map((d, i) => (
-                    <span key={d}>
-                      {i > 0 && (i === domains.length - 1 ? " or " : ", ")}
-                      <strong className="login-email-shown">@{d}</strong>
-                    </span>
-                  ))}{" "}
-                  email can sign in.
-                </>
-              )}
+              Sign in with your work email and pick up right where you left off. We’ll send you a secure
+              {firebaseEnabled() ? " sign-in link" : " one-time code"}, so there’s no password to remember.
             </p>
             <form
               className="login-form"
