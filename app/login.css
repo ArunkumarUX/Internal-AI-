@@ -23,3 +23,6 @@
 }
 .login-link:hover:not(:disabled) { text-decoration: underline; }
 .login-link:disabled { color: var(--kit-muted); cursor: default; }
+.login-paste { display: grid; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--kit-border); }
+.login-paste label > span { display: inline-flex; align-items: center; gap: 6px; }
+.login-paste .secondary-button { min-height: 40px; }

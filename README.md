@@ -35,7 +35,12 @@ The cookie-only local sign-in runs only under the Vite dev server (or with `SITE
 
 ## Sign-in, team accounts and messaging (Vercel)
 
-Everyone signs in with a one-time code emailed to them. There are no passwords.
+Everyone signs in by email, with no passwords. One click on **Email me a sign-in link** sends two emails:
+
+- **Firebase email link** (when the three `NEXT_PUBLIC_FIREBASE_*` settings are set): Firebase (Google) emails a sign-in link. Opening it signs you in; the desktop app has a "paste the link" box. The server verifies the Firebase ID token with Google's public keys (issuer, audience, signature, verified email, signed in within the last 10 minutes), then applies the same team and domain rules. No Firebase secret is needed.
+- **6-digit code** from the workspace's own email sender (Microsoft Graph or SMTP below). If it can't be sent, the page relies on the link.
+
+Firebase setup: create a project, add a Web app, enable **Authentication → Email/Password → Email link (passwordless)**, and add `internal-ai.vercel.app` (and `localhost` for development) under **Authorized domains**. `NEXT_PUBLIC_*` values are built into the page, so redeploy after setting them.
 
 - `ALLOWED_EMAIL_DOMAINS` (default `naar.io,nextgentechs.io`): anyone with an email at one of these exact domains can request a code; their account is created on first sign-in. People from other domains must be added in Settings → Team. Removing someone blocks them until they are added back.
 - `AUTH_EMAIL`: the workspace admin. The admin keeps the original workspace, so existing data stays theirs. Optional `AUTH_NAME` sets the admin's display name.

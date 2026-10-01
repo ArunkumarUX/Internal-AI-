@@ -2,12 +2,13 @@
 
 import "./login.css";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { ArrowLeft, LoaderCircle, MailCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, Link2, LoaderCircle, MailCheck, Sparkles } from "lucide-react";
+import { emailForLink, finishSignIn, firebaseEnabled, isSignInLink, sendSignInLink } from "@/lib/firebase-client";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PENDING_KEY = "ia-login-pending";
 
-type Pending = { email: string; resendAt: number };
+type Pending = { email: string; resendAt: number; codeSent?: boolean; linkSent?: boolean; adminFallback?: boolean };
 
 function readPending(): Pending | null {
   try {
@@ -57,6 +58,46 @@ export function LoginScreen({
   );
   const [fieldError, setFieldError] = useState("");
   const [notice, setNotice] = useState("");
+  // What actually went out: the Firebase link, our 6-digit code, or both.
+  const [codeSent, setCodeSent] = useState(true);
+  const [linkSent, setLinkSent] = useState(false);
+  const [adminFallback, setAdminFallback] = useState(false);
+  const [pastedLink, setPastedLink] = useState("");
+  const [finishing, setFinishing] = useState<"" | "working" | "need-email">("");
+  const [linkToFinish, setLinkToFinish] = useState("");
+
+  // Opened the emailed sign-in link: finish signing in here.
+  useEffect(() => {
+    const href = window.location.href;
+    void isSignInLink(href).then((yes) => {
+      if (!yes) return;
+      window.history.replaceState(null, "", "/");
+      const known = emailForLink();
+      setLinkToFinish(href);
+      if (!known) {
+        // Opened on a different browser or device: confirm the email first.
+        setFinishing("need-email");
+        return;
+      }
+      setEmail(known);
+      void completeLink(known, href);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function completeLink(address: string, link: string) {
+    setFinishing("working");
+    setFormError("");
+    try {
+      await finishSignIn(address, link);
+      writePending(null);
+      await onSignedIn();
+    } catch (error) {
+      setFinishing("");
+      setStep("email");
+      setFormError((error as Error).message);
+    }
+  }
 
   const [domains, setDomains] = useState<string[]>([]);
   useEffect(() => {
@@ -74,6 +115,9 @@ export function LoginScreen({
     if (!pending) return;
     setEmail(pending.email);
     setResendAt(pending.resendAt);
+    setCodeSent(pending.codeSent ?? true);
+    setLinkSent(!!pending.linkSent);
+    setAdminFallback(!!pending.adminFallback);
     setStep("code");
   }, []);
 
@@ -99,29 +143,45 @@ export function LoginScreen({
     setFormError("");
     setNotice("");
     try {
-      const { ok, data } = await post("/api/auth/code", { email: address });
-      if (!ok && data.code === "use_password") {
-        // Email isn't set up on this workspace yet: the admin signs in with their password.
-        setStep("password");
-        setNotice(
-          typeof data.error === "string"
-            ? data.error
-            : "Email sign-in isn’t available right now. The workspace admin can sign in with their password.",
-        );
-        requestAnimationFrame(() => passwordRef.current?.focus());
-        return;
-      }
-      if (!ok) {
+      // Firebase emails a sign-in link while the workspace emails a 6-digit code.
+      const [codeResult, linkResult] = await Promise.all([
+        post("/api/auth/code", { email: address }),
+        firebaseEnabled()
+          ? sendSignInLink(address).then(
+              () => true,
+              () => false,
+            )
+          : Promise.resolve(false),
+      ]);
+      const { ok, data } = codeResult;
+      const usePassword = !ok && data.code === "use_password";
+      if (!ok && !linkResult) {
+        if (usePassword) {
+          // Neither email went out: the admin signs in with their password.
+          setStep("password");
+          setNotice(
+            typeof data.error === "string"
+              ? data.error
+              : "Email sign-in isn’t available right now. The workspace admin can sign in with their password.",
+          );
+          requestAnimationFrame(() => passwordRef.current?.focus());
+          return;
+        }
         setFormError(typeof data.error === "string" ? data.error : "We couldn’t send a code. Please try again.");
         return;
       }
-      const next = Date.now() + (typeof data.wait === "number" ? data.wait : 60) * 1000;
+      const next = Date.now() + (ok && typeof data.wait === "number" ? data.wait : 60) * 1000;
       setResendAt(next);
       setNow(Date.now());
-      writePending({ email: address, resendAt: next });
+      setCodeSent(ok);
+      setLinkSent(linkResult);
+      setAdminFallback(usePassword);
+      writePending({ email: address, resendAt: next, codeSent: ok, linkSent: linkResult, adminFallback: usePassword });
       setCode("");
+      setPastedLink("");
       setStep("code");
-      if (resend) setNotice("A new code is on its way. Use the most recent email.");
+      if (resend) setNotice(ok ? "A new code is on its way. Use the most recent email." : "A new sign-in link is on its way.");
+      else if (!ok && linkResult) setNotice("The 6-digit code couldn’t be sent right now, so use the sign-in link instead.");
     } catch {
       setFormError("The workspace couldn’t be reached. Check your connection and try again.");
     } finally {
@@ -198,11 +258,57 @@ export function LoginScreen({
           <span className="brand-icon">{step === "code" ? <MailCheck size={22} /> : <Sparkles size={22} />}</span>
         </div>
         <p className="login-kicker">Internal AI</p>
-        {step === "email" ? (
+        {finishing === "working" ? (
+          <>
+            <h1>Signing you in…</h1>
+            <p className="login-lede">
+              <LoaderCircle size={16} className="spin" aria-hidden="true" /> Checking your sign-in link.
+            </p>
+          </>
+        ) : finishing === "need-email" ? (
+          <>
+            <h1>Confirm your email</h1>
+            <p className="login-lede">
+              You opened the sign-in link on a different browser or device. Enter the email it was sent to.
+            </p>
+            <form
+              className="login-form"
+              noValidate
+              onSubmit={(e: FormEvent) => {
+                e.preventDefault();
+                if (!EMAIL.test(email.trim())) {
+                  setFieldError("Enter your work email, like name@company.com.");
+                  return;
+                }
+                void completeLink(email, linkToFinish);
+              }}
+            >
+              <label htmlFor="login-confirm-email">
+                Work email
+                <input
+                  id="login-confirm-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="username"
+                  autoFocus
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@company.com"
+                  aria-invalid={fieldError ? true : undefined}
+                />
+              </label>
+              {fieldError ? <p className="login-field-error">{fieldError}</p> : null}
+              <button className="primary-button login-submit" type="submit">
+                Continue
+              </button>
+            </form>
+          </>
+        ) : step === "email" ? (
           <>
             <h1>Sign in to your workspace</h1>
             <p className="login-lede">
-              Enter your work email and we’ll send you a one-time sign-in code. No password needed.
+              Enter your work email and we’ll email you a{firebaseEnabled() ? " sign-in link and a" : ""} one-time code.
+              No password needed.
               {domains.length > 0 && (
                 <>
                   {" "}
@@ -256,8 +362,10 @@ export function LoginScreen({
                 {busy ? (
                   <>
                     <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                    Sending code…
+                    Sending…
                   </>
+                ) : firebaseEnabled() ? (
+                  "Email me a sign-in link"
                 ) : (
                   "Email me a code"
                 )}
@@ -327,8 +435,12 @@ export function LoginScreen({
           <>
             <h1>Check your email</h1>
             <p className="login-lede">
-              If <strong className="login-email-shown">{email.trim()}</strong> can use this workspace, we’ve sent it a
-              6-digit code. It expires in 10 minutes.
+              If <strong className="login-email-shown">{email.trim()}</strong> can use this workspace, we’ve sent it{" "}
+              {linkSent && codeSent
+                ? "a sign-in link and a 6-digit code. Open the link, or enter the code below."
+                : linkSent
+                  ? "a sign-in link. Open it on this device to sign in."
+                  : "a 6-digit code. It expires in 10 minutes."}
             </p>
             <form
               className="login-form"
@@ -347,6 +459,8 @@ export function LoginScreen({
                   {notice}
                 </p>
               ) : null}
+              {codeSent && (
+              <>
               <label htmlFor="login-code">
                 Sign-in code
                 <input
@@ -391,6 +505,53 @@ export function LoginScreen({
                   "Sign in"
                 )}
               </button>
+              </>
+              )}
+              {linkSent && (
+                <div className="login-paste">
+                  <label htmlFor="login-link">
+                    <span>
+                      <Link2 size={14} aria-hidden="true" /> {codeSent ? "Or paste the sign-in link" : "Opened the email elsewhere? Paste the link"}
+                    </span>
+                    <input
+                      id="login-link"
+                      type="url"
+                      inputMode="url"
+                      spellCheck={false}
+                      value={pastedLink}
+                      placeholder="https://…"
+                      onChange={(e) => setPastedLink(e.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={!pastedLink.trim() || busy}
+                    onClick={async () => {
+                      if (!(await isSignInLink(pastedLink.trim()))) {
+                        setFormError("That doesn’t look like the sign-in link. Copy the whole link from the email.");
+                        return;
+                      }
+                      await completeLink(email, pastedLink.trim());
+                    }}
+                  >
+                    Sign in with link
+                  </button>
+                </div>
+              )}
+              {adminFallback && (
+                <button
+                  type="button"
+                  className="login-link"
+                  onClick={() => {
+                    setStep("password");
+                    setNotice("");
+                    requestAnimationFrame(() => passwordRef.current?.focus());
+                  }}
+                >
+                  Workspace admin? Sign in with your password
+                </button>
+              )}
               <div className="login-actions">
                 <button type="button" className="login-link" onClick={changeEmail}>
                   <ArrowLeft size={14} aria-hidden="true" /> Use a different email
@@ -401,7 +562,7 @@ export function LoginScreen({
                   disabled={busy || wait > 0}
                   onClick={() => void sendCode(true)}
                 >
-                  {wait > 0 ? `Resend code in ${wait}s` : "Resend code"}
+                  {wait > 0 ? `Resend in ${wait}s` : linkSent && !codeSent ? "Resend link" : "Resend"}
                 </button>
               </div>
             </form>
