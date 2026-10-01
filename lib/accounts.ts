@@ -175,8 +175,65 @@ export async function accountForSignIn(email: string): Promise<Account | null> {
   return accountByEmail(wanted);
 }
 
+/* ---------------------------------------------------------------- */
+/* Pre-added teammates                                                */
+/* ---------------------------------------------------------------- */
+
+/**
+ * People given an account up front, so they appear in Messages and the Team
+ * list before their first sign-in. TEAM_MEMBERS ("email:Name,email:Name")
+ * replaces this list. Removed people (role "blocked") are never re-added.
+ */
+const DEFAULT_TEAM = [
+  ["chedly.bs@nextgentechs.io", "Chedly"],
+  ["deepak@nextgentechs.io", "Deepak"],
+  ["arunkumar.g@nextgentechs.io", "Arunkumar G"],
+  ["tarunY@nextgentechs.io", "Tarun Y"],
+];
+
+function presetTeam(): [string, string][] {
+  const configured = process.env.TEAM_MEMBERS?.trim();
+  const pairs = configured
+    ? configured.split(",").map((entry) => entry.split(":").map((part) => part.trim()))
+    : DEFAULT_TEAM;
+  return pairs
+    .map(([email, name]) => [normaliseEmail(email ?? ""), (name || nameFromEmail(email ?? "")).slice(0, 80)] as [string, string])
+    .filter(([email]) => EMAIL_PATTERN.test(email));
+}
+
+let presetsReady: Promise<void> | null = null;
+
+/** Creates any missing pre-added teammates once per server instance. */
+function ensurePresetTeam() {
+  if (!presetsReady)
+    presetsReady = (async () => {
+      const store = db();
+      if (!store) return;
+      const admin = adminAccount();
+      const now = new Date().toISOString();
+      // Only write when someone is missing: every write saves the whole database.
+      const known = new Set(
+        ((await store.prepare("SELECT email FROM members").all<{ email: string }>()).results ?? []).map((r) => r.email),
+      );
+      for (const [email, name] of presetTeam()) {
+        if ((admin && email === admin.email) || known.has(email)) continue;
+        // DO NOTHING keeps existing accounts (and blocked ones) exactly as they are.
+        await store
+          .prepare(
+            "INSERT INTO members (id,email,name,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(email) DO NOTHING",
+          )
+          .bind(`u_${crypto.randomUUID()}`, email, name, "", "member", now, now)
+          .run();
+      }
+    })().catch(() => {
+      presetsReady = null; // try again on the next request
+    });
+  return presetsReady;
+}
+
 /** Everyone in the workspace, admin first. */
 export async function listAccounts(): Promise<Account[]> {
+  await ensurePresetTeam();
   const admin = adminAccount();
   const rows =
     (
