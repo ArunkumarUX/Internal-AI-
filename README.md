@@ -72,11 +72,18 @@ Local development with `next dev --webpack -p 3100`: put overrides in `.env.deve
 
 Migrations `0004_team_messaging.sql` (team and messages) and `0005_login_codes.sql` (sign-in codes and rate limits) are for the D1 build; the Vercel runtime applies them automatically.
 
-## Meeting assistant (Granola-style)
+## Meeting notebook
 
-- **Your meetings:** each person connects Microsoft 365 (Teams/Outlook). The assistant lists meetings from yesterday to a week ahead with **Take notes** and **Join**, and **Import Teams transcript** for past Teams meetings that were transcribed in Teams. Tokens are stored encrypted (AES-GCM, key derived from `AUTH_SECRET`). Needs `MS_GRAPH_CLIENT_ID` / `MS_GRAPH_CLIENT_SECRET` (optional `MS_GRAPH_TENANT_ID`, default `organizations`) and the delegated permissions in `.env.example`.
-- **Call audio + mic:** records the call's tab or window audio (with "Share audio") mixed with the microphone, in 30-second chunks transcribed by `AI_ASR_MODEL` (default `qwen3-asr-flash`) through the AI gateway. The Windows desktop app captures the computer's own sound. If the AI key doesn't allow the speech model, the page says so and the microphone mode still works.
-- **Your notes:** a notepad beside the transcript; **Enhance notes** keeps every point you wrote and expands it from the transcript, using the chosen template and the meeting's attendees.
+The Meeting assistant is a calm, note-first notebook: calendar → meeting → your notes → quiet transcription → enhanced note → ask.
+
+- **Home:** "Coming up" lists meetings from the connected calendars, with the video service (Teams, Meet or Zoom) recognised from the event's links and **Join** when it starts. Below is a dated timeline of meeting notes (Today, Yesterday, then by date); earlier calendar meetings without a note appear faded.
+- **Calendars:** each person connects Outlook/Teams (`MS_GRAPH_CLIENT_ID` / `MS_GRAPH_CLIENT_SECRET`, optional `MS_GRAPH_TENANT_ID`) and/or Google Calendar (`GOOGLE_CALENDAR_CLIENT_ID` / `GOOGLE_CALENDAR_CLIENT_SECRET`, read-only, redirect URI `<site>/api/google/callback`). Tokens are stored encrypted (AES-GCM, key derived from `AUTH_SECRET`). Zoom and Meet meetings come in through whichever calendar holds them.
+- **The note:** title, date and participants, then a blank page. Notes save as you type (records of kind `saved`, `type: "meeting"`, so they also show in Saved work).
+- **Quiet transcription:** a small floating control (Listening · timer · pause · stop · microphone or call audio · language). The transcript stays out of the way in a drawer (••• → View transcript) with search, copy, inline editing, speaker renaming and jump-to-time. Call audio is transcribed by `AI_ASR_MODEL` (default `qwen3-asr-flash`); a transcript can also be pasted or uploaded (.txt, .vtt, .srt). For ended Teams meetings the official Teams transcript is attached automatically when available.
+- **Enhance notes (⌘↵):** your notes plus the transcript become a note organised by the meeting's own topics, with Decisions and Actions (tickable). Every point you wrote is kept; nothing is invented. The previous version is kept: ••• → Undo enhancement. Stopping transcription writes the notes on its own. Optional note styles: Automatic (default), 1:1, Team meeting, Customer call, Interview, Sales, Project update, Research interview, Stand-up, Custom.
+- **Too little captured:** when the transcript is mostly noise or fragments and there are no notes, no notes are generated; the note offers Continue listening, Upload transcript or Keep my notes.
+- **Ask anything (⌘K):** answers stream in a small panel above the field. Inside a note it answers from that meeting and cites times (click to open the transcript there); from Home it searches all meeting notes by meaning and links the meetings it used.
+- **Keyboard:** ⌘K ask, ⌘N new note (desktop app), ⌘↵ enhance, / commands, Esc closes panels.
 
 ## Live AI configuration
 

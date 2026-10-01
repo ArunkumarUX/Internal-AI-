@@ -107,7 +107,6 @@ import { MessagesView, desktopApp, useUnreadMessages } from "./messages";
 import { DownloadAppButton, DownloadAppDialog, useDesktopChrome } from "./desktop";
 import {
   AgentSkills,
-  MeetingAssistant,
   MagicFeatures,
   Beacon,
   EchoAnywhere,
@@ -121,6 +120,7 @@ import {
   useAssistantPrefs,
   useCompletions,
 } from "./assistant";
+import { Notebook } from "./notebook";
 const items = [
   ["Ask", MessageCircle],
   ["My intelligence", Sparkles],
@@ -1453,8 +1453,8 @@ export default function Home() {
           </section>
         )}
         {/* Kept mounted so a recording or unsaved transcript survives navigation. */}
-        <section className="workspace-page" hidden={view !== "Meeting assistant"}>
-          <MeetingAssistant ws={ws} ask={(q) => tryAsk(q)} onRecording={setMeetingLive} stopSignal={stopMeeting} />
+        <section className="workspace-page notebook-page" hidden={view !== "Meeting assistant"}>
+          <Notebook ws={ws} active={view === "Meeting assistant"} onRecording={setMeetingLive} stopSignal={stopMeeting} />
         </section>
       </main>
       <DownloadAppDialog open={downloadOpen} onOpenChange={setDownloadOpen} />

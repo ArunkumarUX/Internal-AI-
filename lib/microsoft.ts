@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { database, ApiError } from "@/lib/server";
 import { secret } from "@/lib/accounts";
+import { detectProvider, type Provider } from "@/lib/meeting-providers";
 
 /*
  * Microsoft 365 (Teams / Outlook) calendar connection, per person, with the
@@ -37,14 +38,14 @@ const authority = () => `https://login.microsoftonline.com/${tenant()}/oauth2/v2
 
 const key = () => createHash("sha256").update(`internal-ai-microsoft:${secret()}`).digest();
 
-function seal(value: unknown) {
+export function seal(value: unknown) {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key(), iv);
   const body = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
   return `v1.${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${body.toString("base64url")}`;
 }
 
-function unseal<T>(sealed: string): T | null {
+export function unseal<T>(sealed: string): T | null {
   try {
     const [version, iv, tag, body] = sealed.split(".");
     if (version !== "v1") return null;
@@ -226,6 +227,10 @@ export type Meeting = {
   attendees: { name: string; email: string }[];
   joinUrl: string;
   teams: boolean;
+  /** Teams, Google Meet or Zoom, recognised from the event's links. */
+  provider: Provider;
+  /** Which calendar the event came from. */
+  calendar: "microsoft" | "google";
   location: string;
   preview: string;
 };
@@ -258,20 +263,27 @@ export async function listMeetings(userId: string, days = 1, ahead = 7): Promise
   );
   return (data.value ?? [])
     .filter((e) => !e.isCancelled)
-    .map((e) => ({
-      id: e.id,
-      title: e.subject?.trim() || "Untitled meeting",
-      start: e.start ? `${e.start.dateTime.replace(/\.\d+$/, "")}Z` : "",
-      end: e.end ? `${e.end.dateTime.replace(/\.\d+$/, "")}Z` : "",
-      organizer: e.organizer?.emailAddress?.name || e.organizer?.emailAddress?.address || "",
-      attendees: (e.attendees ?? [])
-        .map((a) => ({ name: a.emailAddress?.name ?? "", email: a.emailAddress?.address ?? "" }))
-        .filter((a) => a.name || a.email),
-      joinUrl: e.onlineMeeting?.joinUrl ?? "",
-      teams: e.onlineMeetingProvider === "teamsForBusiness" || /teams\.microsoft\.com/.test(e.onlineMeeting?.joinUrl ?? ""),
-      location: e.location?.displayName ?? "",
-      preview: (e.bodyPreview ?? "").slice(0, 280),
-    }));
+    .map((e) => {
+      // Zoom and Meet links usually sit in the location or the invitation text.
+      const found = detectProvider(e.onlineMeeting?.joinUrl, e.location?.displayName, e.bodyPreview);
+      const teams = e.onlineMeetingProvider === "teamsForBusiness" || found.provider === "teams";
+      return {
+        id: e.id,
+        title: e.subject?.trim() || "Untitled meeting",
+        start: e.start ? `${e.start.dateTime.replace(/\.\d+$/, "")}Z` : "",
+        end: e.end ? `${e.end.dateTime.replace(/\.\d+$/, "")}Z` : "",
+        organizer: e.organizer?.emailAddress?.name || e.organizer?.emailAddress?.address || "",
+        attendees: (e.attendees ?? [])
+          .map((a) => ({ name: a.emailAddress?.name ?? "", email: a.emailAddress?.address ?? "" }))
+          .filter((a) => a.name || a.email),
+        joinUrl: e.onlineMeeting?.joinUrl || found.joinUrl,
+        teams,
+        provider: teams ? "teams" : found.provider,
+        calendar: "microsoft" as const,
+        location: e.location?.displayName ?? "",
+        preview: (e.bodyPreview ?? "").slice(0, 280),
+      };
+    });
 }
 
 /** The official Teams transcript of a meeting, as plain text, when Teams recorded one. */

@@ -1,10 +1,10 @@
 "use client";
-import "./meetings.css";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { CalendarDays, ExternalLink, FileText, LoaderCircle, NotebookPen, RefreshCw, Unplug, Users, Video } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api } from "@/lib/client";
 
+export type Provider = "teams" | "meet" | "zoom" | "";
+
+/** A calendar event from Outlook/Teams or Google Calendar. */
 export type Meeting = {
   id: string;
   title: string;
@@ -14,216 +14,14 @@ export type Meeting = {
   attendees: { name: string; email: string }[];
   joinUrl: string;
   teams: boolean;
+  provider: Provider;
+  calendar: "microsoft" | "google";
   location: string;
   preview: string;
 };
 
-type Calendar = { configured: boolean; connected: boolean; account: string; name: string; meetings: Meeting[] };
-
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-function dayLabel(iso: string) {
-  const d = new Date(iso);
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === tomorrow.toDateString()) return "Tomorrow";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
-}
-
-/* ------------------------------------------------------------------ */
-/* Your meetings (Microsoft 365)                                       */
-/* ------------------------------------------------------------------ */
-
-export function UpcomingMeetings({
-  activeId,
-  onTakeNotes,
-  onTranscript,
-}: {
-  activeId?: string;
-  onTakeNotes: (meeting: Meeting) => void;
-  onTranscript: (meeting: Meeting, text: string) => void;
-}) {
-  const [calendar, setCalendar] = useState<Calendar | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState("");
-  // "Now" for live / past grouping, refreshed every minute.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(t);
-  }, []);
-
-  const load = useCallback(async () => {
-    try {
-      setCalendar(await api("/api/meetings"));
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-    const t = window.setInterval(() => document.visibilityState === "visible" && void load(), 5 * 60_000);
-    // Coming back from the Microsoft sign-in: say how it went.
-    const outcome = new URLSearchParams(window.location.search).get("microsoft");
-    if (outcome) {
-      if (outcome === "connected") toast.success("Microsoft 365 connected. Your meetings are listed here.");
-      else if (outcome === "failed") toast.error("Microsoft 365 didn’t connect. Please try again.");
-      window.history.replaceState(null, "", `/${window.location.hash}`);
-    }
-    return () => window.clearInterval(t);
-  }, [load]);
-
-  async function importTranscript(m: Meeting) {
-    setBusy(`t-${m.id}`);
-    try {
-      const { text } = await api("/api/meetings/transcript", { joinUrl: m.joinUrl });
-      onTranscript(m, text);
-      toast.success("Teams transcript imported");
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function disconnect() {
-    setBusy("disconnect");
-    try {
-      await api("/api/microsoft", undefined, "DELETE");
-      await load();
-      toast.success("Microsoft 365 disconnected");
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy("");
-    }
-  }
-
-  if (!calendar && !error)
-    return (
-      <div className="panel meetings-panel">
-        <h3>
-          <CalendarDays size={16} /> Your meetings
-        </h3>
-        <p className="muted-note">
-          <LoaderCircle size={14} className="spin" /> Loading…
-        </p>
-      </div>
-    );
-
-  if (!calendar?.connected)
-    return (
-      <div className="panel meetings-panel">
-        <h3>
-          <CalendarDays size={16} /> Your meetings
-        </h3>
-        {error ? <p className="notice">{error}</p> : null}
-        <p className="muted-note">
-          See your Teams and Outlook meetings here, take notes in one click, and import Teams transcripts.
-        </p>
-        {calendar?.configured === false ? (
-          <p className="notice">Microsoft 365 isn’t set up for this workspace yet. Ask your admin to add the Microsoft app.</p>
-        ) : (
-          <a className="primary-button meetings-connect" href="/api/microsoft/connect">
-            <Video size={16} /> Connect Microsoft 365
-          </a>
-        )}
-      </div>
-    );
-
-  const meetings = calendar.meetings;
-  const upcoming = meetings.filter((m) => Date.parse(m.end) >= now);
-  const recent = meetings.filter((m) => Date.parse(m.end) < now).reverse().slice(0, 5);
-  const groups = upcoming.reduce<[string, Meeting[]][]>((all, m) => {
-    const label = dayLabel(m.start);
-    const last = all.at(-1);
-    if (last && last[0] === label) last[1].push(m);
-    else all.push([label, [m]]);
-    return all;
-  }, []);
-
-  const row = (m: Meeting, past: boolean) => {
-    const live = Date.parse(m.start) <= now && Date.parse(m.end) >= now;
-    return (
-      <li key={m.id} className={`meeting-row${m.id === activeId ? " active" : ""}${live ? " live" : ""}`}>
-        <div className="meeting-row-time">
-          <strong>{time(m.start)}</strong>
-          <small>{time(m.end)}</small>
-        </div>
-        <div className="meeting-row-main">
-          <strong title={m.title}>
-            {live && <span className="meeting-live">Now</span>}
-            {m.title}
-          </strong>
-          <small>
-            {m.teams && <Video size={12} aria-label="Teams meeting" />}
-            <Users size={12} aria-hidden /> {m.attendees.length + 1}
-            {m.organizer ? ` · ${m.organizer}` : ""}
-          </small>
-          <div className="meeting-row-actions">
-            {!past && (
-              <button className="secondary-button" onClick={() => onTakeNotes(m)}>
-                <NotebookPen size={14} /> Take notes
-              </button>
-            )}
-            {!past && m.joinUrl && (
-              <a className="quiet-button" href={m.joinUrl} target="_blank" rel="noreferrer">
-                <ExternalLink size={14} /> Join
-              </a>
-            )}
-            {past && m.teams && m.joinUrl && (
-              <button className="quiet-button" disabled={busy === `t-${m.id}`} onClick={() => void importTranscript(m)}>
-                {busy === `t-${m.id}` ? <LoaderCircle size={14} className="spin" /> : <FileText size={14} />} Import Teams
-                transcript
-              </button>
-            )}
-          </div>
-        </div>
-      </li>
-    );
-  };
-
-  return (
-    <div className="panel meetings-panel">
-      <div className="meetings-head">
-        <h3>
-          <CalendarDays size={16} /> Your meetings
-        </h3>
-        <button className="icon-button" aria-label="Refresh meetings" title="Refresh" onClick={() => void load()}>
-          <RefreshCw size={15} />
-        </button>
-      </div>
-      {error && <p className="notice">{error}</p>}
-      {groups.length ? (
-        groups.map(([label, items]) => (
-          <section key={label} className="meetings-day">
-            <h4>{label}</h4>
-            <ul>{items.map((m) => row(m, false))}</ul>
-          </section>
-        ))
-      ) : (
-        <p className="muted-note">No meetings in the next 7 days.</p>
-      )}
-      {recent.length > 0 && (
-        <section className="meetings-day">
-          <h4>Earlier</h4>
-          <ul>{recent.map((m) => row(m, true))}</ul>
-        </section>
-      )}
-      <p className="meetings-account">
-        {calendar.account || calendar.name}
-        <button className="quiet-button" disabled={busy === "disconnect"} onClick={() => void disconnect()}>
-          <Unplug size={13} /> Disconnect
-        </button>
-      </p>
-    </div>
-  );
-}
+type Connection = { configured: boolean; connected: boolean; account: string; name: string };
+export type Calendars = { microsoft: Connection; google: Connection; meetings: Meeting[]; error: string };
 
 /* ------------------------------------------------------------------ */
 /* Capture call audio (any app: Teams, Zoom, Meet …)                   */
