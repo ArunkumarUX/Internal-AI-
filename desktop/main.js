@@ -183,7 +183,10 @@ function setUpPermissions() {
         const sources = await desktopCapturer.getSources({ types: ["screen"] });
         const display = win ? screen.getDisplayMatching(win.getBounds()) : null;
         const source = sources.find((s) => display && s.display_id === String(display.id)) ?? sources[0];
-        callback(source ? { video: source } : {});
+        // Call capture asks for audio too: on Windows that is the computer's own
+        // sound (e.g. the Teams app), so everyone on the call is transcribed.
+        const audio = request.audioRequested && process.platform === "win32" ? { audio: "loopback" } : {};
+        callback(source ? { video: source, ...audio } : {});
       } catch {
         callback({});
       }

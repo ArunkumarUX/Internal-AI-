@@ -58,6 +58,12 @@ Local development with `next dev --webpack -p 3100`: put overrides in `.env.deve
 
 Migrations `0004_team_messaging.sql` (team and messages) and `0005_login_codes.sql` (sign-in codes and rate limits) are for the D1 build; the Vercel runtime applies them automatically.
 
+## Meeting assistant (Granola-style)
+
+- **Your meetings:** each person connects Microsoft 365 (Teams/Outlook). The assistant lists meetings from yesterday to a week ahead with **Take notes** and **Join**, and **Import Teams transcript** for past Teams meetings that were transcribed in Teams. Tokens are stored encrypted (AES-GCM, key derived from `AUTH_SECRET`). Needs `MS_GRAPH_CLIENT_ID` / `MS_GRAPH_CLIENT_SECRET` (optional `MS_GRAPH_TENANT_ID`, default `organizations`) and the delegated permissions in `.env.example`.
+- **Call audio + mic:** records the call's tab or window audio (with "Share audio") mixed with the microphone, in 30-second chunks transcribed by `AI_ASR_MODEL` (default `qwen3-asr-flash`) through the AI gateway. The Windows desktop app captures the computer's own sound. If the AI key doesn't allow the speech model, the page says so and the microphone mode still works.
+- **Your notes:** a notepad beside the transcript; **Enhance notes** keeps every point you wrote and expands it from the transcript, using the chosen template and the meeting's attendees.
+
 ## Live AI configuration
 
 Configure server-side runtime values:

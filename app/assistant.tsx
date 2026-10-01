@@ -58,6 +58,7 @@ import { toast } from "sonner";
 import { api, downloadText, type Workspace } from "@/lib/client";
 import { INTEGRATION_MATCH, SKILL_DEFAULTS, type SkillId } from "@/lib/skills";
 import { Badge, PageTitle, Empty } from "./workspaces";
+import { UpcomingMeetings, useCallCapture, type Meeting } from "./meetings";
 
 /* ------------------------------------------------------------------ */
 /* Preferences                                                         */
@@ -2582,6 +2583,10 @@ export function MeetingAssistant({
   const [dirty, setDirty] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [confirm, setConfirm] = useState<{ message: string; action: string; run: () => void } | null>(null);
+  // Granola-style: your own notes beside the transcript, and the calendar meeting they belong to.
+  const [myNotes, setMyNotes] = useState("");
+  const [meeting, setMeeting] = useState<Meeting | null>(null);
+  const [source, setSource] = useState<"mic" | "call">("mic");
   const secondsRef = useRef(0);
   secondsRef.current = seconds;
   // Read at call time so notes created on End include the last phrases.
@@ -2595,6 +2600,13 @@ export function MeetingAssistant({
     prefs.meeting.language,
     "meeting",
   );
+  const capture = useCallCapture(
+    (text, at) => {
+      setSegments((s) => [...s, { at, text }].sort((a, b) => a.at - b.at));
+      setDirty(true);
+    },
+    prefs.meeting.language.slice(0, 2),
+  );
   const transcriptEnd = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (status !== "recording") return;
@@ -2604,16 +2616,18 @@ export function MeetingAssistant({
   useEffect(() => {
     transcriptEnd.current?.scrollIntoView({ block: "nearest" });
   }, [segments.length, speech.interim]);
-  const transcript = speech.supported
-    ? segments.map((s) => `[${clock(s.at)}] ${s.text}`).join("\n")
-    : pasted;
+  const transcript =
+    speech.supported || segments.length
+      ? segments.map((s) => `[${clock(s.at)}] ${s.text}`).join("\n")
+      : pasted;
   transcriptRef.current = transcript;
   const live = status === "recording" || status === "paused";
   const unsaved = dirty && !!transcript.trim();
   // If recognition stops on its own (mic lost, permission revoked), stop the clock too.
   useEffect(() => {
-    if (status === "recording" && !speech.listening) setStatus("paused");
-  }, [status, speech.listening]);
+    if (status !== "recording") return;
+    if (source === "mic" ? !speech.listening : !capture.active) setStatus("paused");
+  }, [status, speech.listening, capture.active, source]);
   useEffect(
     () => onRecording?.(status === "recording" ? "recording" : status === "paused" ? "paused" : "off"),
     [status, onRecording],
@@ -2658,8 +2672,9 @@ export function MeetingAssistant({
   const past = ws.state.records.filter(
     (r) => r.kind === "saved" && r.data.type === "meeting",
   );
-  function begin() {
-    if (!speech.start()) return;
+  async function begin() {
+    const started = source === "call" ? await capture.start(secondsRef.current) : speech.start();
+    if (!started) return;
     if (status === "idle" || status === "done") {
       setSegments([]);
       setSeconds(0);
@@ -2672,17 +2687,19 @@ export function MeetingAssistant({
   }
   function start() {
     if ((status === "idle" || status === "done") && unsaved) {
-      setConfirm({ message: "Start over and discard the unsaved transcript?", action: "Discard", run: begin });
+      setConfirm({ message: "Start over and discard the unsaved transcript?", action: "Discard", run: () => void begin() });
       return;
     }
-    begin();
+    void begin();
   }
   function pause() {
     speech.stop();
+    capture.stop();
     setStatus("paused");
   }
   function stop() {
     speech.stop();
+    capture.stop();
     setStatus("done");
     if (prefs.meeting.autoNotes) window.setTimeout(() => notes(), 600);
   }
@@ -2705,6 +2722,8 @@ export function MeetingAssistant({
     setSavedId(r.id);
     setTitle(r.data.title);
     setClient(r.data.client ?? "None");
+    setMyNotes(String(r.data.notes ?? ""));
+    setMeeting(null);
     setSeconds(r.data.duration ?? 0);
     setStatus("done");
     setDirty(false);
@@ -2724,8 +2743,8 @@ export function MeetingAssistant({
   }
   function notes(kind: "notes" | "actions" = "notes") {
     const transcript = transcriptRef.current;
-    if (!transcript.trim()) {
-      toast.error("There’s no transcript yet.");
+    if (!transcript.trim() && !myNotes.trim()) {
+      toast.error("There’s no transcript or notes yet.");
       return;
     }
     const instruction =
@@ -2737,8 +2756,15 @@ export function MeetingAssistant({
       transcript.length > 10500
         ? `${transcript.slice(0, 3000)}\n[… middle of the meeting omitted for length …]\n${transcript.slice(-7400)}`
         : transcript;
+    const people = meeting?.attendees.length
+      ? `\nAttendees: ${[meeting.organizer, ...meeting.attendees.map((a) => a.name || a.email)].filter(Boolean).join(", ")}`
+      : "";
+    // Granola-style: your notes are the outline; the transcript fills in what you didn't write down.
+    const mine = myNotes.trim()
+      ? `\n\nMy notes (keep every point I wrote and build the notes around them; expand each with details from the transcript):\n"""\n${myNotes.trim().slice(0, 3000)}\n"""`
+      : "";
     ask(
-      `${instruction}\n\nMeeting: ${meetingTitle}${client !== "None" ? `\nClient: ${client}` : ""}\n\nTranscript:\n"""\n${body}\n"""`,
+      `${instruction}${mine ? " Use my notes as the backbone." : ""}\n\nMeeting: ${meetingTitle}${client !== "None" ? `\nClient: ${client}` : ""}${people}${mine}\n\nTranscript:\n"""\n${body || "(no transcript)"}\n"""`,
     );
   }
   async function save() {
@@ -2756,6 +2782,9 @@ export function MeetingAssistant({
           type: "meeting",
           title: meetingTitle,
           content: snapshot,
+          notes: myNotes.trim() || undefined,
+          attendees: meeting ? [meeting.organizer, ...meeting.attendees.map((a) => a.name || a.email)].filter(Boolean) : undefined,
+          meetingId: meeting?.id,
           client: client !== "None" ? client : undefined,
           duration: seconds,
           sourceIds: [],
@@ -2775,6 +2804,47 @@ export function MeetingAssistant({
     }
   }
   const hasTranscript = !!transcript.trim();
+  const hasContent = hasTranscript || !!myNotes.trim();
+  /** Prefills the meeting from the calendar and matches it to a client. */
+  function takeNotes(m: Meeting) {
+    const run = () => {
+      setMeeting(m);
+      setTitle(m.title);
+      const haystack = `${m.title} ${m.attendees.map((a) => `${a.name} ${a.email}`).join(" ")}`.toLowerCase();
+      const match = ws.allClients.find((c) => haystack.includes(c.name.toLowerCase()));
+      setClient(match?.name ?? "None");
+      setMyNotes((n) => n || "");
+      setSegments([]);
+      setSeconds(0);
+      setSavedId(undefined);
+      setDirty(false);
+      setStatus("idle");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      toast.success(`Ready for “${m.title}”. Press Start recording when the call begins.`);
+    };
+    if (live) {
+      toast.error("End the current recording first.");
+      return;
+    }
+    if (unsaved) setConfirm({ message: "Switch meetings and discard the unsaved transcript?", action: "Switch", run });
+    else run();
+  }
+  function applyTeamsTranscript(m: Meeting, text: string) {
+    setMeeting(m);
+    setTitle(m.title);
+    setSegments(
+      text
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const t = line.match(/^\[(\d+):(\d+)\]\s*(.*)$/);
+          return t ? { at: +t[1] * 60 + +t[2], text: t[3] } : { at: 0, text: line };
+        }),
+    );
+    setStatus("done");
+    setSavedId(undefined);
+    setDirty(true);
+  }
   return (
     <>
       <PageTitle
@@ -2850,7 +2920,68 @@ export function MeetingAssistant({
               </button>
             </div>
           )}
-          {speech.supported ? (
+          {meeting && (
+            <div className="meeting-context">
+              <strong>{meeting.title}</strong>
+              <small>
+                {new Date(meeting.start).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })} ·{" "}
+                {meeting.attendees.length + 1} people{meeting.teams ? " · Teams" : ""}
+              </small>
+              {meeting.joinUrl && (
+                <a className="quiet-button" href={meeting.joinUrl} target="_blank" rel="noreferrer">
+                  Join call
+                </a>
+              )}
+            </div>
+          )}
+          <div className="capture-source" role="radiogroup" aria-label="What to record">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={source === "mic"}
+              className={source === "mic" ? "on" : ""}
+              disabled={live}
+              onClick={() => setSource("mic")}
+            >
+              <Mic size={15} /> Microphone
+              <small>In-room meetings, live transcript</small>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={source === "call"}
+              className={source === "call" ? "on" : ""}
+              disabled={live || !capture.supported}
+              onClick={() => setSource("call")}
+            >
+              <Monitor size={15} /> Call audio + mic
+              <small>Teams, Zoom, Meet: everyone on the call</small>
+            </button>
+          </div>
+          {source === "call" && !live && (
+            <p className="muted-note capture-hint">
+              When you press Start, choose the call’s window or browser tab and turn on <strong>Share audio</strong>. The
+              transcript updates about every 30 seconds.
+            </p>
+          )}
+          {capture.error && (
+            <div className="notice" role="alert">
+              {capture.error} Switch to Microphone to keep transcribing.
+            </div>
+          )}
+          <label className="field-label my-notes">
+            Your notes
+            <textarea
+              value={myNotes}
+              onChange={(e) => {
+                setMyNotes(e.target.value);
+                setDirty(true);
+              }}
+              rows={5}
+              placeholder="Jot down key points as you go. Enhance notes turns them into full notes using the transcript."
+            />
+          </label>
+          {speech.supported || source === "call" ? (
             <>
               <div className={`recorder ${status}`}>
                 <span className="rec-indicator" aria-hidden />
@@ -2866,6 +2997,7 @@ export function MeetingAssistant({
                   </strong>
                   <small>
                     <Clock size={12} /> {clock(seconds)} · {segments.length} phrases
+                    {capture.pending > 0 && " · transcribing…"}
                   </small>
                 </div>
                 <div className="rec-controls">
@@ -2934,10 +3066,10 @@ export function MeetingAssistant({
           <div className="button-row meeting-actions">
             <button
               className="primary-button"
-              disabled={!hasTranscript || status === "recording"}
+              disabled={!hasContent || status === "recording"}
               onClick={() => notes()}
             >
-              <Sparkles size={16} /> Generate notes
+              <Sparkles size={16} /> {myNotes.trim() ? "Enhance notes" : "Generate notes"}
             </button>
             <button
               className="secondary-button"
@@ -2948,21 +3080,27 @@ export function MeetingAssistant({
             </button>
             <button
               className="secondary-button"
-              disabled={!hasTranscript || saving}
+              disabled={!hasContent || saving}
               onClick={() => void save()}
             >
-              <FileText size={16} /> {saving ? "Saving…" : "Save transcript"}
+              <FileText size={16} /> {saving ? "Saving…" : "Save meeting"}
             </button>
             <button
               className="secondary-button"
               disabled={!hasTranscript}
-              onClick={() => downloadText(meetingTitle, `# ${meetingTitle}\n\n${transcript}`)}
+              onClick={() =>
+                downloadText(
+                  meetingTitle,
+                  `# ${meetingTitle}\n\n${myNotes.trim() ? `## My notes\n\n${myNotes.trim()}\n\n` : ""}## Transcript\n\n${transcript}`,
+                )
+              }
             >
               <Download size={16} /> Download
             </button>
           </div>
         </div>
         <aside className="meeting-side">
+          <UpcomingMeetings activeId={meeting?.id} onTakeNotes={takeNotes} onTranscript={applyTeamsTranscript} />
           <div className="panel">
             <h3>Notes settings</h3>
             <label className="field-label">
