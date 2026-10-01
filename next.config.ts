@@ -7,6 +7,9 @@ const cfStub = path.join(root, "lib/cf-env-stub.ts");
 const envFile = path.join(root, "lib/env.ts");
 
 const nextConfig: NextConfig = {
+  // The development "N" badge sits on top of the profile avatar; hide it so
+  // local development looks like production.
+  devIndicators: false,
   outputFileTracingRoot: root,
   serverExternalPackages: ["sql.js"],
   outputFileTracingIncludes: {
