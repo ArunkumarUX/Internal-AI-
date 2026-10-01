@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { ApiError } from "@/lib/server";
+import { firebaseConfig } from "@/lib/firebase-config";
 
 /*
  * Firebase email-link sign-in. Firebase (Google) emails the link and signs the
@@ -7,19 +8,13 @@ import { ApiError } from "@/lib/server";
  * Google's public keys, so no service-account secret is needed. Our own team
  * and domain rules then decide whether that email may use the workspace.
  *
- * Settings (public by design, also read by the browser):
- *   NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
- *   NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ * Configuration lives in lib/firebase-config.ts (public by design).
  */
 
-export const firebaseProjectId = () => process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || "";
+export const firebaseProjectId = () => firebaseConfig.projectId.trim();
 
 export function firebaseConfigured() {
-  return !!(
-    firebaseProjectId() &&
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim() &&
-    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim()
-  );
+  return !!(firebaseConfig.projectId && firebaseConfig.apiKey && firebaseConfig.authDomain);
 }
 
 const keys = createRemoteJWKSet(

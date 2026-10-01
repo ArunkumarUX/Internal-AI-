@@ -6,12 +6,7 @@
  * starts a normal session. The Firebase session itself isn't kept.
  */
 import type { Auth } from "firebase/auth";
-
-const config = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "",
-};
+import { firebaseConfig as config } from "@/lib/firebase-config";
 const EMAIL_KEY = "ia-firebase-email";
 
 export const firebaseEnabled = () => !!(config.apiKey && config.authDomain && config.projectId);
