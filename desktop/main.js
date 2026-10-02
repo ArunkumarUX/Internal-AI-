@@ -239,7 +239,7 @@ function createMenu() {
       label: "File",
       submenu: [
         { label: "Quick ask", accelerator: QUICK_SHORTCUT, click: quickAsk },
-        { label: "New chat", accelerator: "CmdOrCtrl+N", click: () => win?.loadURL(new URL("/#ask", APP_URL).toString()) },
+        { label: "New chat or note", accelerator: "CmdOrCtrl+N", click: newItem },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
       ],
@@ -294,6 +294,20 @@ const newer = (a, b) => {
   return false;
 };
 let announced = "";
+
+/** ⌘N: a new note on the meeting page (the page handles the shortcut), otherwise a new chat. */
+function newItem() {
+  if (!win) return;
+  const current = win.webContents.getURL();
+  if (current.startsWith(ORIGIN) && new URL(current).hash === "#meeting-assistant") {
+    const mod = isMac ? "metaKey" : "ctrlKey";
+    win.webContents
+      .executeJavaScript(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", ${mod}: true, bubbles: true }))`)
+      .catch(() => {});
+    return;
+  }
+  win.loadURL(new URL("/#ask", APP_URL).toString());
+}
 
 /** Asks the workspace for the latest desktop version and offers the download. */
 async function checkForUpdate() {
