@@ -8,12 +8,15 @@ import {
   presets,
   readModelChoice,
 } from "@/lib/models";
+import { asrModel, embeddingModel, modelAccess } from "@/lib/model-access";
+import { pgConfigured } from "@/lib/postgres";
 
 export async function GET() {
   try {
     const user = await identity();
     const chosen = await readModelChoice(user.userId);
-    const listed = await listGatewayModels();
+    const [listed, access] = await Promise.all([listGatewayModels(), modelAccess()]);
+    const pg = pgConfigured();
     const catalog = [
       ...new Set(
         [chosen.model, chosen.fast, defaultModels().model, defaultModels().fast]
@@ -25,9 +28,22 @@ export async function GET() {
       configured: !!env.AI_GATEWAY_URL && !!env.AI_GATEWAY_KEY && !!chosen.model,
       provider: "Aliyun Model Studio",
       providerNote: "Your questions go to the approved OpenAI-compatible gateway. API keys stay on the server.",
-      embedding: "Lexical retrieval",
-      embeddingNote: "Ask matches documents by text. A private embedder is not connected.",
-      store: "Cloudflare D1 + R2",
+      embedding:
+        access.embedding === "on" ? `Search by meaning on (${embeddingModel()})` : pg ? "Full-text search" : "Lexical retrieval",
+      embeddingNote:
+        access.embedding === "on"
+          ? "Ask finds passages by meaning as well as by words."
+          : access.embedding === "denied"
+            ? `Your AI key doesn’t allow ${embeddingModel()} yet, so Ask matches by words. Allow it on the key to search by meaning.`
+            : "Ask matches documents by words.",
+      transcription: access.asr === "on" ? `Call transcription on (${asrModel()})` : "Call transcription off",
+      transcriptionNote:
+        access.asr === "on"
+          ? "Teams, Zoom and Meet call audio can be transcribed in the Meeting assistant."
+          : access.asr === "denied"
+            ? `Your AI key doesn’t allow ${asrModel()} yet. Microphone transcription still works.`
+            : "The speech model couldn’t be reached just now.",
+      store: pg ? "Supabase Postgres + pgvector" : "Vercel Blob (SQLite)",
       storeNote: "Workspace records and uploads stay in this Internal AI instance.",
       selected: chosen,
       presets: presets(),

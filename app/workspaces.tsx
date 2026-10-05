@@ -32,6 +32,7 @@ import {
   MessageCircle,
   Upload,
   Cpu,
+  Mic,
   Database,
   MoreHorizontal,
   Pencil,
@@ -2271,6 +2272,8 @@ function ModelsPanel({ ws }: { ws: Workspace }) {
     providerNote: string;
     embedding: string;
     embeddingNote: string;
+    transcription?: string;
+    transcriptionNote?: string;
     store: string;
     storeNote: string;
     selected: { model: string; fast: string };
@@ -2475,6 +2478,15 @@ function ModelsPanel({ ws }: { ws: Workspace }) {
             </p>
           </div>
           <Sparkles size={18} aria-hidden="true" />
+        </div>
+        <div className="setting-row">
+          <div>
+            <strong>Call transcription</strong>
+            <p>
+              {catalog?.transcription ?? "Checking…"}. {catalog?.transcriptionNote}
+            </p>
+          </div>
+          <Mic size={18} aria-hidden="true" />
         </div>
         <div className="setting-row">
           <div>
