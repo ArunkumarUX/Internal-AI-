@@ -35,7 +35,7 @@ export async function transcribe(userId: string, audio: Uint8Array, mime: string
   };
   if (response.status === 401 || response.status === 403 || json.error?.code === "access_denied" || json.error?.code === "model_not_found")
     throw new ApiError(
-      "Call transcription isn’t enabled for this workspace’s AI key yet. Ask your admin to allow the speech-to-text model.",
+      "Workspace transcription isn’t enabled on the AI key yet (allow qwen3-asr-flash). Meanwhile, paste or upload a transcript, or use Chrome on a network that can reach Google’s speech service.",
       503,
       "asr_unavailable",
     );

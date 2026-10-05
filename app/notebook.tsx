@@ -39,6 +39,7 @@ import {
 import { api, downloadText, type Workspace } from "@/lib/client";
 import { setMeetingSeconds, useAssistantPrefs, useSpeech, type RecordingState } from "./assistant";
 import { useCallCapture, type Calendars, type Meeting, type Provider } from "./meetings";
+import { desktopApp } from "./messages";
 
 /* ------------------------------------------------------------------ */
 /* Types and helpers                                                   */
@@ -544,7 +545,22 @@ export function Notebook({
     },
     [change],
   );
-  const speech = useSpeech((text) => text && append({ at: secondsRef.current, speaker: "", text }), language, "meeting");
+  // The microphone uses the browser's speech recognition when it's reachable,
+  // otherwise it's recorded and transcribed on the server (desktop app, VPNs,
+  // browsers without Google's speech service).
+  const [serverMic, setServerMic] = useState(false);
+  useEffect(() => setServerMic(!!desktopApp()), []);
+  const fallbackRef = useRef<() => void>(() => {});
+  const speech = useSpeech(
+    (text) => text && append({ at: secondsRef.current, speaker: "", text }),
+    language,
+    "meeting",
+    (code) => {
+      if (code !== "network" && code !== "service-not-allowed") return false;
+      fallbackRef.current();
+      return true;
+    },
+  );
   const capture = useCallCapture((text, at) => append({ at, speaker: "", text }), language.slice(0, 2));
   const live = status === "recording" || status === "paused";
   const liveKey = useRef("");
@@ -557,8 +573,8 @@ export function Notebook({
   // Recognition that stops on its own (mic lost, permission revoked) pauses the clock.
   useEffect(() => {
     if (status !== "recording") return;
-    if (source === "mic" ? !speech.listening : !capture.active) setStatus("paused");
-  }, [status, speech.listening, capture.active, source]);
+    if (source === "mic" && !serverMic ? !speech.listening : !capture.active) setStatus("paused");
+  }, [status, speech.listening, capture.active, source, serverMic]);
   useEffect(
     () => onRecording?.(status === "recording" ? "recording" : status === "paused" ? "paused" : "off"),
     [status, onRecording],
@@ -592,7 +608,12 @@ export function Notebook({
       return;
     }
     setSource(from);
-    const started = from === "call" ? await capture.start(secondsRef.current) : speech.start();
+    const started =
+      from === "call"
+        ? await capture.start(secondsRef.current)
+        : serverMic || !speech.supported
+          ? await capture.start(secondsRef.current, true)
+          : speech.start();
     if (!started) return;
     if (status === "idle") {
       // Continue the meeting clock after earlier capture.
@@ -604,6 +625,14 @@ export function Notebook({
     setInsufficient(false);
     setStatus("recording");
   }
+  fallbackRef.current = () => {
+    if (serverMic) return;
+    setServerMic(true);
+    toast.message("Your browser’s speech service isn’t reachable, so the microphone is now transcribed by the workspace instead.");
+    void capture.start(secondsRef.current, true).then((ok) => {
+      if (ok) setStatus("recording");
+    });
+  };
   function pauseCapture() {
     speech.stop();
     capture.stop();
@@ -1246,7 +1275,7 @@ export function Notebook({
               language={language}
               pending={capture.pending}
               callSupported={capture.supported}
-              speechSupported={speech.supported}
+              speechSupported={speech.supported || capture.supported}
               error={capture.error}
               onStart={(s) => void startCapture(s)}
               onPause={pauseCapture}

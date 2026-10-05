@@ -1091,7 +1091,13 @@ export function useMicBusy() {
  * Wraps the browser speech API. `onFinal` receives each finished phrase;
  * `interim` holds the phrase still being spoken.
  */
-export function useSpeech(onFinal: (text: string) => void, lang = "en-GB", owner: MicKind = "dictation") {
+export function useSpeech(
+  onFinal: (text: string) => void,
+  lang = "en-GB",
+  owner: MicKind = "dictation",
+  /** Return true to handle a recognition error yourself (no toast). */
+  onError?: (code: string) => boolean,
+) {
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
@@ -1099,6 +1105,8 @@ export function useSpeech(onFinal: (text: string) => void, lang = "en-GB", owner
   const wanted = useRef(false);
   const final = useRef(onFinal);
   final.current = onFinal;
+  const errorRef = useRef(onError);
+  errorRef.current = onError;
   const token = useRef({}).current;
   useEffect(() => setSupported(!!recognitionCtor()), []);
   const retire = (r: Recognition | null) => {
@@ -1151,6 +1159,7 @@ export function useSpeech(onFinal: (text: string) => void, lang = "en-GB", owner
       // so stop instead of restarting into the same error forever.
       if (e.error === "no-speech" || e.error === "aborted") return;
       wanted.current = false;
+      if (errorRef.current?.(e.error)) return;
       toast.error(
         e.error === "not-allowed" || e.error === "service-not-allowed"
           ? "Microphone access was blocked. Allow it in your browser to use voice."

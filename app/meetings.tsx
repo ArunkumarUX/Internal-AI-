@@ -106,9 +106,19 @@ export function useCallCapture(onText: (text: string, atSeconds: number) => void
   }
 
   /** Starts capturing; `startSeconds` lines chunks up with the meeting clock. */
-  async function start(startSeconds: number) {
+  async function start(startSeconds: number, micOnly = false) {
     setError("");
     try {
+      if (micOnly) {
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        streams.current = [mic];
+        mic.getAudioTracks()[0].addEventListener("ended", stopAll);
+        startedAt.current = Date.now();
+        offset.current = startSeconds;
+        setActive(true);
+        record(mic);
+        return true;
+      }
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       display.getVideoTracks().forEach((t) => t.stop()); // only the sound is kept
       if (!display.getAudioTracks().length) {
@@ -132,7 +142,13 @@ export function useCallCapture(onText: (text: string, atSeconds: number) => void
       record(out.stream);
       return true;
     } catch (e) {
-      if ((e as Error).name !== "NotAllowedError") toast.error("Call audio couldn’t be captured in this browser.");
+      if (micOnly)
+        toast.error(
+          (e as Error).name === "NotAllowedError"
+            ? "Microphone access was blocked. Allow it in your browser to transcribe."
+            : "The microphone couldn’t be used.",
+        );
+      else if ((e as Error).name !== "NotAllowedError") toast.error("Call audio couldn’t be captured in this browser.");
       stopAll();
       return false;
     }
