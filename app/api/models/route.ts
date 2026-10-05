@@ -8,7 +8,7 @@ import {
   presets,
   readModelChoice,
 } from "@/lib/models";
-import { asrModel, embeddingModel, modelAccess } from "@/lib/model-access";
+import { modelAccess } from "@/lib/model-access";
 import { pgConfigured } from "@/lib/postgres";
 
 export async function GET() {
@@ -27,22 +27,27 @@ export async function GET() {
     return Response.json({
       configured: !!env.AI_GATEWAY_URL && !!env.AI_GATEWAY_KEY && !!chosen.model,
       provider: "Aliyun Model Studio",
-      providerNote: "Your questions go to the approved OpenAI-compatible gateway. API keys stay on the server.",
+      providerNote:
+        "Your questions go to the approved OpenAI-compatible gateway. If a model isn’t available on the key, Internal AI switches to the next suitable one automatically. API keys stay on the server.",
       embedding:
-        access.embedding === "on" ? `Search by meaning on (${embeddingModel()})` : pg ? "Full-text search" : "Lexical retrieval",
+        access.embedding.access === "on"
+          ? `Search by meaning on · ${access.embedding.model}`
+          : pg
+            ? "Full-text search"
+            : "Lexical retrieval",
       embeddingNote:
-        access.embedding === "on"
-          ? "Ask finds passages by meaning as well as by words."
-          : access.embedding === "denied"
-            ? `Your AI key doesn’t allow ${embeddingModel()} yet, so Ask matches by words. Allow it on the key to search by meaning.`
+        access.embedding.access === "on"
+          ? "Chosen automatically. Ask finds passages by meaning as well as by words."
+          : access.embedding.access === "denied"
+            ? "Your AI key doesn’t allow any embedding model yet (for example text-embedding-v4), so Ask matches by words. It switches on by itself once one is allowed."
             : "Ask matches documents by words.",
-      transcription: access.asr === "on" ? `Call transcription on (${asrModel()})` : "Call transcription off",
+      transcription: access.asr.access === "on" ? `Workspace transcription on · ${access.asr.model}` : "Workspace transcription off",
       transcriptionNote:
-        access.asr === "on"
-          ? "Teams, Zoom and Meet call audio can be transcribed in the Meeting assistant."
-          : access.asr === "denied"
-            ? `Your AI key doesn’t allow ${asrModel()} yet. Microphone transcription still works.`
-            : "The speech model couldn’t be reached just now.",
+        access.asr.access === "on"
+          ? "Chosen automatically. Call audio, and the microphone when the browser’s speech service can’t be reached, are transcribed with it."
+          : access.asr.access === "denied"
+            ? "Your AI key doesn’t allow any speech-to-text model yet (for example qwen3-asr-flash). Browser microphone transcription still works where available."
+            : "The speech models couldn’t be reached just now.",
       store: pg ? "Supabase Postgres + pgvector" : "Vercel Blob (SQLite)",
       storeNote: "Workspace records and uploads stay in this Internal AI instance.",
       selected: chosen,

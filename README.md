@@ -95,6 +95,10 @@ Configure server-side runtime values:
 
 No model is selected or charged until configured. Without these values, Ask returns labelled evidence extracts and structured draft templates. With them, the server sends accessible retrieved excerpts, the question, and a limited recent conversation to the approved gateway. Tool execution is never performed by the model.
 
+## Automatic model choice
+
+Features ask for a kind of model (chat, fast, vision, embedding, speech-to-text), not a specific one. `lib/model-router.ts` tries the best fit first (`AI_MODEL`, `AI_FAST_MODEL`, `AI_VISION_MODEL`, `AI_EMBEDDING_MODEL`, `AI_ASR_MODEL` lead when set) and moves down a list of suitable models when the key refuses one or the gateway doesn't have it, remembering refusals for 15 minutes. Speech-to-text falls back from Qwen3-ASR to Qwen Omni models; each vector records the embedding model that made it, so a change of model re-embeds passages rather than mixing vectors. Settings → Models shows which embedding and speech models are in use.
+
 ## Agent backend
 
 Stack: Cloudflare Workers (API routes), D1 (records, documents, jobs, capability cache), R2 (originals, generated files) and the OpenAI-compatible AI gateway. Skills are stored in the user's settings record and enforced on the server in `lib/engine.ts`; the browser never decides what runs.

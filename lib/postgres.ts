@@ -118,6 +118,8 @@ const MIGRATIONS = (schema: string) => [
   `CREATE INDEX IF NOT EXISTS document_chunks_user ON ${schema}.document_chunks (user_id)`,
   `CREATE INDEX IF NOT EXISTS document_chunks_tsv ON ${schema}.document_chunks USING gin (tsv)`,
   `CREATE INDEX IF NOT EXISTS document_chunks_embedding ON ${schema}.document_chunks USING hnsw (embedding extensions.vector_cosine_ops)`,
+  // v2: which model made each vector, so a model change re-embeds instead of mixing vectors.
+  `ALTER TABLE ${schema}.document_chunks ADD COLUMN IF NOT EXISTS embedding_model text`,
   // SQLite's JSON helpers, for the few queries that read inside a record's data
   `CREATE OR REPLACE FUNCTION ${schema}.json_path(path text) RETURNS text[] LANGUAGE sql IMMUTABLE AS
      $$ SELECT string_to_array(regexp_replace(path, '^\\$\\.?', ''), '.') $$`,
@@ -144,7 +146,7 @@ const MIGRATIONS = (schema: string) => [
 ];
 
 /** Bump when MIGRATIONS change; instances skip the DDL when it's already applied. */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * Makes sure the schema is current. A new instance only reads one row; the

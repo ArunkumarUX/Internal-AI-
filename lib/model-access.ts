@@ -1,4 +1,5 @@
 import { env } from "@/lib/env";
+import { candidates, isRefusal, markRefused, markWorking } from "@/lib/model-router";
 
 /*
  * Whether the AI key may use the embedding and speech models, checked with
@@ -7,11 +8,9 @@ import { env } from "@/lib/env";
  */
 
 export type Access = "on" | "denied" | "unavailable";
+export type ModelStatus = { access: Access; model: string };
 
-const EMBEDDING = () => process.env.AI_EMBEDDING_MODEL?.trim() || "text-embedding-v4";
-const ASR = () => process.env.AI_ASR_MODEL?.trim() || "qwen3-asr-flash";
-
-let cached: { at: number; value: { embedding: Access; asr: Access } } | null = null;
+let cached: { at: number; value: { embedding: ModelStatus; asr: ModelStatus } } | null = null;
 
 /** Half a second of 16 kHz mono silence as a WAV file. */
 function silentWav() {
@@ -40,30 +39,54 @@ async function probe(path: string, body: unknown): Promise<Access> {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(20_000),
     });
+    if (response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return "on";
+    }
     const json = (await response.json().catch(() => ({}))) as { error?: { code?: string } };
-    if (response.ok) return "on";
-    return response.status === 401 || response.status === 403 || json.error?.code === "access_denied" ? "denied" : "unavailable";
+    return isRefusal(response.status, json.error?.code) ? "denied" : "unavailable";
   } catch {
     return "unavailable";
   }
 }
 
+/** The first model of a kind that the key accepts, trying them in order. */
+async function firstWorking(kind: "embedding" | "asr", request: (model: string) => [string, unknown]): Promise<ModelStatus> {
+  let sawOther = false;
+  for (const model of candidates(kind)) {
+    const [path, body] = request(model);
+    const access = await probe(path, body);
+    if (access === "on") {
+      markWorking(kind, model);
+      return { access, model };
+    }
+    if (access === "denied") markRefused(model);
+    else sawOther = true;
+  }
+  return { access: sawOther ? "unavailable" : "denied", model: candidates(kind)[0] ?? "" };
+}
+
 export async function modelAccess() {
-  if (!env.AI_GATEWAY_URL || !env.AI_GATEWAY_KEY) return { embedding: "unavailable" as Access, asr: "unavailable" as Access };
+  const none: ModelStatus = { access: "unavailable", model: "" };
+  if (!env.AI_GATEWAY_URL || !env.AI_GATEWAY_KEY) return { embedding: none, asr: none };
   if (cached && Date.now() - cached.at < 5 * 60_000) return cached.value;
+  const audio = `data:audio/wav;base64,${silentWav()}`;
   const [embedding, asr] = await Promise.all([
-    probe("/embeddings", { model: EMBEDDING(), input: ["hello"], dimensions: 1024 }),
-    probe("/chat/completions", {
-      model: ASR(),
-      stream: false,
-      messages: [
-        { role: "user", content: [{ type: "input_audio", input_audio: { data: `data:audio/wav;base64,${silentWav()}`, format: "wav" } }] },
-      ],
-    }),
+    firstWorking("embedding", (model) => ["/embeddings", { model, input: ["hello"], dimensions: 1024 }]),
+    firstWorking("asr", (model) =>
+      /omni/.test(model)
+        ? [
+            "/chat/completions",
+            {
+              model,
+              stream: true,
+              modalities: ["text"],
+              messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: audio, format: "wav" } }, { type: "text", text: "Transcribe." }] }],
+            },
+          ]
+        : ["/chat/completions", { model, stream: false, messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: audio, format: "wav" } }] }] }],
+    ),
   ]);
   cached = { at: Date.now(), value: { embedding, asr } };
   return cached.value;
 }
-
-export const embeddingModel = EMBEDDING;
-export const asrModel = ASR;

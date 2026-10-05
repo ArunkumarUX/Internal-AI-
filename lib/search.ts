@@ -1,6 +1,7 @@
 import { gateway } from "@/lib/ai";
 import { ensureSchema, pgConfigured, postgresD1 } from "@/lib/postgres";
 import { chunk } from "@/lib/chunk";
+import { AllRefused, isRefusal, withModel, workingModel } from "@/lib/model-router";
 
 export { chunk };
 
@@ -15,7 +16,6 @@ export { chunk };
 
 const DIMENSIONS = 1024;
 const EMBED_BATCH = 10;
-const MODEL = () => process.env.AI_EMBEDDING_MODEL?.trim() || "text-embedding-v4";
 
 export const searchAvailable = () => pgConfigured();
 const sql = () => postgresD1().raw();
@@ -24,31 +24,33 @@ const sql = () => postgresD1().raw();
 /* Embeddings                                                         */
 /* ---------------------------------------------------------------- */
 
-// When the key refuses the model, don't ask again for a while.
+// When the key refuses every embedding model, don't ask again for a while.
 let deniedUntil = 0;
 
-async function embed(userId: string, inputs: string[]): Promise<number[][] | null> {
+/** Vectors for `inputs` and the model that made them (chosen automatically). */
+async function embed(userId: string, inputs: string[]): Promise<{ vectors: number[][]; model: string } | null> {
   if (!inputs.length || Date.now() < deniedUntil) return null;
   const ai = await gateway(userId).catch(() => null);
   if (!ai) return null;
   try {
-    const response = await fetch(`${ai.base}/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.key}` },
-      body: JSON.stringify({ model: MODEL(), input: inputs, dimensions: DIMENSIONS, encoding_format: "float" }),
-      signal: AbortSignal.timeout(20_000),
+    type Embedded = { vectors: number[][]; model: string } | null;
+    return await withModel<Embedded>("embedding", async (model): Promise<Embedded | { refused: true }> => {
+      const response = await fetch(`${ai.base}/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.key}` },
+        body: JSON.stringify({ model, input: inputs, dimensions: DIMENSIONS, encoding_format: "float" }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const json = (await response.json().catch(() => ({}))) as {
+        data?: { embedding: number[]; index: number }[];
+        error?: { code?: string };
+      };
+      if (isRefusal(response.status, json.error?.code)) return { refused: true as const };
+      if (!response.ok || !json.data || json.data[0]?.embedding.length !== DIMENSIONS) return null;
+      return { vectors: json.data.sort((a, b) => a.index - b.index).map((d) => d.embedding), model };
     });
-    const json = (await response.json().catch(() => ({}))) as {
-      data?: { embedding: number[]; index: number }[];
-      error?: { code?: string };
-    };
-    if (!response.ok || !json.data) {
-      if (response.status === 401 || response.status === 403 || json.error?.code === "access_denied")
-        deniedUntil = Date.now() + 10 * 60 * 1000;
-      return null;
-    }
-    return json.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
-  } catch {
+  } catch (e) {
+    if (e instanceof AllRefused) deniedUntil = Date.now() + 10 * 60 * 1000;
     return null;
   }
 }
@@ -79,15 +81,22 @@ export async function indexDocument(userId: string, documentId: string, title: s
 export async function embedPending(userId: string, limit = 60) {
   if (!pgConfigured() || Date.now() < deniedUntil) return 0;
   const db = sql();
+  const current = workingModel("embedding");
   const rows = await db<{ id: number; content: string }[]>`
-    SELECT id, content FROM document_chunks WHERE user_id = ${userId} AND embedding IS NULL ORDER BY id LIMIT ${limit}`;
+    SELECT id, content FROM document_chunks
+    WHERE user_id = ${userId}
+      AND (embedding IS NULL ${
+        // Once a model is known to work, passages embedded by another model are redone.
+        current ? db`OR embedding_model IS DISTINCT FROM ${current}` : db``
+      })
+    ORDER BY embedding IS NOT NULL, id LIMIT ${limit}`;
   let done = 0;
   for (let i = 0; i < rows.length; i += EMBED_BATCH) {
     const batch = rows.slice(i, i + EMBED_BATCH);
-    const vectors = await embed(userId, batch.map((r) => r.content.slice(0, 6000)));
-    if (!vectors) break;
+    const result = await embed(userId, batch.map((r) => r.content.slice(0, 6000)));
+    if (!result) break;
     for (let k = 0; k < batch.length; k++)
-      await db`UPDATE document_chunks SET embedding = ${vector(vectors[k])}::extensions.vector WHERE id = ${batch[k].id}`;
+      await db`UPDATE document_chunks SET embedding = ${vector(result.vectors[k])}::extensions.vector, embedding_model = ${result.model} WHERE id = ${batch[k].id}`;
     done += batch.length;
   }
   return done;
@@ -125,12 +134,13 @@ export async function searchDocumentIds(userId: string, query: string, limit = 2
     WHERE user_id = ${userId} AND tsv @@ q
     GROUP BY document_id ORDER BY rank DESC LIMIT ${limit}`;
   let semantic: { document_id: string }[] = [];
-  const [qv] = (await embed(userId, [query.slice(0, 2000)])) ?? [];
-  if (qv) {
+  const q = await embed(userId, [query.slice(0, 2000)]);
+  const qv = q?.vectors[0];
+  if (q && qv) {
     semantic = await db<{ document_id: string }[]>`
       SELECT document_id, min(embedding <=> ${vector(qv)}::extensions.vector) AS distance
       FROM (SELECT document_id, embedding FROM document_chunks
-            WHERE user_id = ${userId} AND embedding IS NOT NULL
+            WHERE user_id = ${userId} AND embedding IS NOT NULL AND embedding_model = ${q.model}
             ORDER BY embedding <=> ${vector(qv)}::extensions.vector LIMIT ${limit * 3}) nearest
       GROUP BY document_id ORDER BY distance LIMIT ${limit}`;
     void embedPending(userId, 30).catch(() => {});

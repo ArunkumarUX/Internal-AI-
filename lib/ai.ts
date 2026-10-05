@@ -1,6 +1,7 @@
 import { env } from "@/lib/env";
 import { ApiError, database } from "@/lib/server";
 import { readModelChoice } from "@/lib/models";
+import { AllRefused, isRefusal, kindOf, withModel, type ModelKind } from "@/lib/model-router";
 
 /** OpenAI-compatible gateway access shared by Ask, uploads, jobs and tools. */
 export type Gateway = {
@@ -88,44 +89,59 @@ export async function streamChat(
     webSearch?: boolean;
     maxTokens?: number;
     model?: string;
+    /** Which family to fall back within; worked out from the model when omitted. */
+    kind?: ModelKind;
     signal?: AbortSignal;
   } = {},
 ) {
   const timeout = AbortSignal.timeout(90000);
   const signal = options.signal ? anySignal([options.signal, timeout]) : timeout;
-  const response = await fetch(ai.url, {
-    method: "POST",
-    redirect: "manual",
-    headers: headers(ai),
-    body: JSON.stringify({
-      model: options.model ?? ai.model,
-      messages,
-      temperature: 0.2,
-      max_tokens: options.maxTokens ?? 3000,
-      enable_thinking: false,
-      stream: true,
-      ...(options.tools?.length ? { tools: options.tools } : {}),
-      ...(options.tools?.length && options.force
-        ? { tool_choice: { type: "function", function: { name: options.force } } }
-        : {}),
-      ...(options.webSearch && isDashScope(ai)
-        ? { enable_search: true, search_options: { search_strategy: "turbo" } }
-        : {}),
-    }),
-    signal,
-  });
+  const requested = options.model ?? ai.model;
+  // Automatic fallback: if the key refuses this model, use the next suitable one.
+  let response: Response;
+  try {
+    response = await withModel(
+      options.kind ?? kindOf(requested, requested === ai.fast && ai.fast !== ai.model ? "fast" : "chat"),
+      async (model) => {
+        const r = await fetch(ai.url, {
+          method: "POST",
+          redirect: "manual",
+          headers: headers(ai),
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: 0.2,
+            max_tokens: options.maxTokens ?? 3000,
+            enable_thinking: false,
+            stream: true,
+            ...(options.tools?.length ? { tools: options.tools } : {}),
+            ...(options.tools?.length && options.force
+              ? { tool_choice: { type: "function", function: { name: options.force } } }
+              : {}),
+            ...(options.webSearch && isDashScope(ai)
+              ? { enable_search: true, search_options: { search_strategy: "turbo" } }
+              : {}),
+          }),
+          signal,
+        });
+        if (!r.ok && isRefusal(r.status)) {
+          await r.body?.cancel().catch(() => {});
+          return { refused: true as const };
+        }
+        return r;
+      },
+      requested,
+    );
+  } catch (e) {
+    if (e instanceof AllRefused)
+      throw new ApiError("Your AI key doesn’t allow any suitable chat model. Ask your admin to allow one on the key.", 502);
+    throw e;
+  }
   if (!response.ok || !response.body) {
     // Response bodies can echo prompts, so only the status is logged.
     await response.body?.cancel().catch(() => {});
     console.error("gateway", response.status);
-    throw new ApiError(
-      response.status === 403
-        ? "Your AI gateway key doesn’t allow this model. Choose another in Settings → Models."
-        : response.status === 404
-          ? "The selected model wasn't found on your gateway. Choose another in Settings → Models."
-          : "The approved AI gateway is unavailable. Please retry; no answer was saved.",
-      502,
-    );
+    throw new ApiError("The approved AI gateway is unavailable. Please retry; no answer was saved.", 502);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -174,24 +190,42 @@ export async function streamChat(
 export async function complete(
   ai: Gateway,
   messages: ChatMessage[],
-  options: { model?: string; maxTokens?: number; timeoutMs?: number; webSearch?: boolean } = {},
+  options: { model?: string; kind?: ModelKind; maxTokens?: number; timeoutMs?: number; webSearch?: boolean } = {},
 ) {
-  const response = await fetch(ai.url, {
-    method: "POST",
-    redirect: "manual",
-    headers: headers(ai),
-    body: JSON.stringify({
-      model: options.model ?? ai.fast,
-      messages,
-      temperature: 0.2,
-      max_tokens: options.maxTokens ?? 800,
-      enable_thinking: false,
-      ...(options.webSearch && isDashScope(ai)
-        ? { enable_search: true, search_options: { forced_search: true, search_strategy: "turbo" } }
-        : {}),
-    }),
-    signal: AbortSignal.timeout(options.timeoutMs ?? 45000),
-  });
+  const requested = options.model ?? ai.fast;
+  let response: Response;
+  try {
+    response = await withModel(
+      options.kind ?? kindOf(requested, requested === ai.model && ai.fast !== ai.model ? "chat" : "fast"),
+      async (model) => {
+        const r = await fetch(ai.url, {
+          method: "POST",
+          redirect: "manual",
+          headers: headers(ai),
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: 0.2,
+            max_tokens: options.maxTokens ?? 800,
+            enable_thinking: false,
+            ...(options.webSearch && isDashScope(ai)
+              ? { enable_search: true, search_options: { forced_search: true, search_strategy: "turbo" } }
+              : {}),
+          }),
+          signal: AbortSignal.timeout(options.timeoutMs ?? 45000),
+        });
+        if (!r.ok && isRefusal(r.status)) {
+          await r.body?.cancel().catch(() => {});
+          return { refused: true as const };
+        }
+        return r;
+      },
+      requested,
+    );
+  } catch (e) {
+    if (e instanceof AllRefused) throw new ApiError("Your AI key doesn’t allow a suitable model for this.", 502);
+    throw e;
+  }
   if (!response.ok) {
     await response.body?.cancel();
     throw new ApiError("The AI gateway couldn’t complete this request.", 502);
@@ -336,7 +370,7 @@ export async function describeImage(ai: Gateway, bytes: Uint8Array, mime: string
         ],
       },
     ],
-    { model: ai.model, maxTokens: 2500, timeoutMs: 60000 },
+    { model: ai.model, kind: "vision", maxTokens: 2500, timeoutMs: 60000 },
   );
 }
 

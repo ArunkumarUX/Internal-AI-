@@ -2481,7 +2481,7 @@ function ModelsPanel({ ws }: { ws: Workspace }) {
         </div>
         <div className="setting-row">
           <div>
-            <strong>Call transcription</strong>
+            <strong>Transcription</strong>
             <p>
               {catalog?.transcription ?? "Checking…"}. {catalog?.transcriptionNote}
             </p>
