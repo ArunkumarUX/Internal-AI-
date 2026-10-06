@@ -46,7 +46,7 @@ export async function GET() {
         access.asr.access === "on"
           ? "Chosen automatically. Call audio, and the microphone when the browser’s speech service can’t be reached, are transcribed with it."
           : access.asr.access === "denied"
-            ? "Your AI key doesn’t allow any speech-to-text model yet (for example qwen3-asr-flash). Browser microphone transcription still works where available."
+            ? "No speech-to-text service yet: add TRANSCRIBE_API_KEY (OpenAI or Groq) or allow qwen3-asr-flash on the AI key. Browser microphone transcription still works where available."
             : "The speech models couldn’t be reached just now.",
       store: pg ? "Supabase Postgres + pgvector" : "Vercel Blob (SQLite)",
       storeNote: "Workspace records and uploads stay in this Internal AI instance.",

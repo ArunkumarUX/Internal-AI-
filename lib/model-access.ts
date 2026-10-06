@@ -1,5 +1,6 @@
 import { env } from "@/lib/env";
 import { candidates, isRefusal, markRefused, markWorking } from "@/lib/model-router";
+import { transcriptionService } from "@/lib/transcribe";
 
 /*
  * Whether the AI key may use the embedding and speech models, checked with
@@ -66,14 +67,36 @@ async function firstWorking(kind: "embedding" | "asr", request: (model: string) 
   return { access: sawOther ? "unavailable" : "denied", model: candidates(kind)[0] ?? "" };
 }
 
+/** A dedicated transcription service: a tiny silent clip shows whether the key works. */
+async function serviceStatus(service: { url: string; key: string; model: string }): Promise<ModelStatus> {
+  try {
+    const form = new FormData();
+    form.append("file", new Blob([Buffer.from(silentWav(), "base64")], { type: "audio/wav" }), "probe.wav");
+    form.append("model", service.model);
+    const response = await fetch(`${service.url}/audio/transcriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${service.key}` },
+      body: form,
+      signal: AbortSignal.timeout(20_000),
+    });
+    await response.body?.cancel().catch(() => {});
+    return { access: response.ok ? "on" : response.status === 401 || response.status === 403 ? "denied" : "unavailable", model: service.model };
+  } catch {
+    return { access: "unavailable", model: service.model };
+  }
+}
+
 export async function modelAccess() {
   const none: ModelStatus = { access: "unavailable", model: "" };
   if (!env.AI_GATEWAY_URL || !env.AI_GATEWAY_KEY) return { embedding: none, asr: none };
   if (cached && Date.now() - cached.at < 5 * 60_000) return cached.value;
   const audio = `data:audio/wav;base64,${silentWav()}`;
+  const service = transcriptionService();
   const [embedding, asr] = await Promise.all([
     firstWorking("embedding", (model) => ["/embeddings", { model, input: ["hello"], dimensions: 1024 }]),
-    firstWorking("asr", (model) =>
+    service
+      ? serviceStatus(service)
+      : firstWorking("asr", (model) =>
       /omni/.test(model)
         ? [
             "/chat/completions",

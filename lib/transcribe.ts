@@ -78,7 +78,49 @@ async function omni(ai: Gateway, model: string, audio: string, format: string, l
   return text.trim();
 }
 
+/*
+ * Optional dedicated speech-to-text service (OpenAI-compatible
+ * /audio/transcriptions: OpenAI, Groq, Azure OpenAI…). Used first when set:
+ *   TRANSCRIBE_API_KEY   the service's key
+ *   TRANSCRIBE_API_URL   default https://api.openai.com/v1 (Groq: https://api.groq.com/openai/v1)
+ *   TRANSCRIBE_MODEL     default gpt-4o-mini-transcribe (Groq: whisper-large-v3-turbo)
+ */
+export const transcriptionService = () =>
+  process.env.TRANSCRIBE_API_KEY?.trim()
+    ? {
+        url: (process.env.TRANSCRIBE_API_URL?.trim() || "https://api.openai.com/v1").replace(/\/$/, ""),
+        key: process.env.TRANSCRIBE_API_KEY.trim(),
+        model: process.env.TRANSCRIBE_MODEL?.trim() || "gpt-4o-mini-transcribe",
+      }
+    : null;
+
+async function viaService(audio: Uint8Array, mime: string, language?: string) {
+  const service = transcriptionService()!;
+  const form = new FormData();
+  const ext = /wav/.test(mime) ? "wav" : /mp3|mpeg/.test(mime) ? "mp3" : /ogg/.test(mime) ? "ogg" : /mp4|m4a/.test(mime) ? "m4a" : "webm";
+  form.append("file", new Blob([audio as BlobPart], { type: mime }), `audio.${ext}`);
+  form.append("model", service.model);
+  form.append("response_format", "json");
+  if (language) form.append("language", language);
+  const response = await fetch(`${service.url}/audio/transcriptions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${service.key}` },
+    body: form,
+    signal: AbortSignal.timeout(60_000),
+  });
+  const json = (await response.json().catch(() => ({}))) as { text?: string; error?: { message?: string; code?: string } };
+  if (!response.ok) {
+    console.error("[transcribe] service", response.status, json.error?.code);
+    return null; // fall back to the AI gateway's models
+  }
+  return (json.text ?? "").trim();
+}
+
 export async function transcribe(userId: string, audio: Uint8Array, mime: string, language?: string) {
+  if (transcriptionService()) {
+    const text = await viaService(audio, mime, language);
+    if (text !== null) return text;
+  }
   const ai = await gateway(userId);
   if (!ai) throw new ApiError("Transcription needs the AI gateway, which isn’t configured.", 503, "asr_unavailable");
   const data = `data:${mime};base64,${Buffer.from(audio).toString("base64")}`;
@@ -90,7 +132,7 @@ export async function transcribe(userId: string, audio: Uint8Array, mime: string
   } catch (e) {
     if (e instanceof AllRefused)
       throw new ApiError(
-        "Your AI key doesn’t allow any speech-to-text model yet (for example qwen3-asr-flash). Meanwhile, paste or upload a transcript.",
+        "No speech-to-text service is available yet. Add a transcription key (TRANSCRIBE_API_KEY, e.g. OpenAI or Groq) or allow qwen3-asr-flash on the AI key. Meanwhile, paste or upload a transcript.",
         503,
         "asr_unavailable",
       );
