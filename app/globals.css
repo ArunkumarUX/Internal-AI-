@@ -4366,3 +4366,7 @@ a.px-chip { text-decoration: none; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
 }
+
+/* Notion import (Settings → Integrations) */
+.notion-import { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--kit-border, #dfe5ef); display: grid; gap: 10px; }
+.notion-import .notice ul { margin: 8px 0 0; padding-left: 18px; }

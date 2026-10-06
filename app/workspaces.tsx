@@ -2758,6 +2758,7 @@ export function Settings({ ws, setView }: Props) {
                 </button>
               )}
             </div>
+            {notion?.connected && <NotionImport onDone={() => void ws.refresh()} />}
           </article>
           {servers.length ? (
             servers.map((r) => (
@@ -3158,5 +3159,74 @@ export function Settings({ ws, setView }: Props) {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** Copies a Notion page and everything under it into Knowledge. */
+function NotionImport({ onDone }: { onDone: () => void }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{
+    imported: number;
+    updated: number;
+    unchanged: number;
+    failed: number;
+    truncated: boolean;
+    pages: { title: string; id: string }[];
+  } | null>(null);
+  async function run() {
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await api("/api/notion/import", { url: url.trim() });
+      setResult(r);
+      onDone();
+      toast.success(
+        r.imported || r.updated
+          ? `Notion imported: ${r.imported} new, ${r.updated} updated`
+          : "Notion is already up to date in Knowledge",
+      );
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="notion-import">
+      <label className="field-label">
+        Import a Notion page into Knowledge
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://www.notion.so/… (the page and everything under it)"
+          aria-label="Notion page link"
+        />
+      </label>
+      <div className="button-row">
+        <button className="primary-button" disabled={busy || url.trim().length < 10} onClick={() => void run()}>
+          {busy ? "Importing… this can take a few minutes" : "Import page"}
+        </button>
+      </div>
+      <p className="muted-note">
+        Copies the page, its sub-pages, databases and their entries, so search and Ask can use them. Import again any time to
+        refresh; changed pages are updated, not duplicated.
+      </p>
+      {result && (
+        <div className="notice" role="status">
+          {result.imported} new · {result.updated} updated · {result.unchanged} unchanged
+          {result.failed ? ` · ${result.failed} couldn’t be read` : ""}
+          {result.truncated ? " · stopped at the size limit; import a sub-page to get the rest" : ""}
+          {result.pages.length > 0 && (
+            <ul>
+              {result.pages.slice(0, 12).map((p) => (
+                <li key={p.id}>{p.title}</li>
+              ))}
+              {result.pages.length > 12 && <li>and {result.pages.length - 12} more</li>}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

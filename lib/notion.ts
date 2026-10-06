@@ -154,7 +154,7 @@ export async function finishNotionAuth(userId: string, request: Request) {
   await writeConnection(userId, PROVIDER, tokens);
 }
 
-async function markReauth(userId: string) {
+export async function markReauth(userId: string) {
   // UPDATE only: a disconnect made meanwhile must not be undone.
   await database()
     .prepare(
@@ -200,7 +200,7 @@ async function refresh(userId: string, tokens: Tokens): Promise<string | null> {
 /** One refresh per user at a time within this isolate. */
 const refreshing = new Map<string, Promise<string | null>>();
 
-async function accessToken(userId: string) {
+export async function accessToken(userId: string) {
   const tokens = await readConnection<Tokens>(userId, PROVIDER);
   if (!tokens) return null;
   if (tokens.reauth) throw new NotionReauthError();
@@ -279,7 +279,7 @@ function parseHits(text: string): Hit[] {
   }
 }
 
-function pageText(raw: string) {
+export function pageText(raw: string) {
   try {
     const json = JSON.parse(raw);
     return String(json.text ?? json.content ?? raw);
@@ -288,7 +288,7 @@ function pageText(raw: string) {
   }
 }
 
-function pageTitle(raw: string, fallback: string) {
+export function pageTitle(raw: string, fallback: string) {
   try {
     const json = JSON.parse(raw);
     if (typeof json.title === "string" && json.title.trim()) return json.title;
@@ -302,7 +302,7 @@ function pageTitle(raw: string, fallback: string) {
   );
 }
 
-function notionIdsIn(query: string) {
+export function notionIdsIn(query: string) {
   const compact = query.match(/[0-9a-f]{32}/gi) ?? [];
   const dashed =
     query.match(
